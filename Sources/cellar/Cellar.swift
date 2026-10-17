@@ -8,7 +8,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [EngineCommand.self, BottleCommand.self, Run.self]
+        subcommands: [DoctorCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
     )
 }
 
@@ -76,6 +76,7 @@ struct BottleCommand: AsyncParsableCommand {
         @Argument var name: String
         @Option(help: "Engine id (default: the pinned default engine).") var engine: String?
         func run() async throws {
+            try Doctor(paths: CellarPaths()).requireRosetta()
             let info = try await bottleStore().create(BottleName(name), engineId: engine)
             print("Created bottle \"\(info.name)\" on \(info.engineId).")
         }
@@ -117,9 +118,51 @@ struct Run: AsyncParsableCommand {
     @Argument(parsing: .captureForPassthrough) var arguments: [String] = []
 
     func run() async throws {
+        try Doctor(paths: CellarPaths()).requireRosetta()
         let result = try await bottleStore().run(BottleName(bottle), program: program, arguments: arguments,
                                                  mode: headless ? .headless : .interactive)
         print(result.output, terminator: "")
         throw ExitCode(result.exitCode)
+    }
+}
+
+struct DoctorCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "doctor", abstract: "Check this Mac has what Cellar needs.")
+    func run() throws {
+        let checks = try Doctor(paths: CellarPaths()).run()
+        for c in checks {
+            print("\(c.ok ? "✓" : (c.optional ? "–" : "✗")) \(c.name)\(c.optional && !c.ok ? " (optional for now)" : "")")
+            if !c.ok, let fix = c.fix { print("    \(fix)") }
+        }
+        if checks.contains(where: { !$0.ok && !$0.optional }) { throw ExitCode(1) }
+    }
+}
+
+struct D3DMetalCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "d3dmetal",
+        abstract: "Apple's DirectX-to-Metal layer, from your own Game Porting Toolkit download.",
+        subcommands: [Import.self, Status.self]
+    )
+
+    struct Import: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Import D3DMetal from the Game Porting Toolkit .dmg (or a folder).")
+        @Argument(help: "The .dmg you downloaded from Apple, or a folder containing redist/lib.") var source: String
+        func run() async throws {
+            let url = URL(filePath: (source as NSString).expandingTildeInPath)
+            let imported = try await D3DMetalStore(paths: CellarPaths()).importFrom(url)
+            print("Imported D3DMetal \(imported.version).")
+        }
+    }
+
+    struct Status: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show which D3DMetal is imported.")
+        func run() throws {
+            if let current = try D3DMetalStore(paths: CellarPaths()).current() {
+                print("D3DMetal \(current.version), imported \(current.importedAt.formatted()) from \(current.source)")
+            } else {
+                print("Not imported. Sign in at \(Doctor.gptkURL), download the Game Porting Toolkit .dmg, then run: cellar d3dmetal import ~/Downloads/<file>.dmg")
+            }
+        }
     }
 }
