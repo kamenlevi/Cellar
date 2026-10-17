@@ -1,1 +1,12 @@
-{"engines":[]}
+{
+  "engines": [
+    {
+      "id": "sikarugir-10.0_6-c1",
+      "wineVersion": "10.0 (Sikarugir revision 6)",
+      "url": "https://github.com/kamenlevi/Cellar/releases/download/engine-sikarugir-10.0_6-c1/cellar-engine-sikarugir-10.0_6-c1.tar.xz",
+      "sha256": "2f2df1175a296c5c156a826b9e25dd174643db64b51d5675ffb18915a3580bde",
+      "size": 254153876,
+      "isDefault": true
+    }
+  ]
+}
