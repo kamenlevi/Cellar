@@ -9,5 +9,10 @@
 
 ## Kamen's checks
 
-- [ ] `cellar run "M0 Check" notepad` shows a Notepad window at the right Retina size.
-- [ ] After downloading the Game Porting Toolkit from Apple himself: `cellar d3dmetal import ~/Downloads/<file>.dmg`, then `cellar d3dmetal status` shows the version.
+- [x] **Notepad at the right Retina size.** Passed on the third try.
+  - First try: everything came out half size. The bottle had Retina mode on but Windows' default 96 DPI. Fixed in 6b4c56e: bottles now get 192 DPI (200%), like Windows on a Retina-class display.
+  - Second try: the menus were right, but the text area was still tiny. Wine's Notepad defaults to "System" 9 pt, a bitmap font that can't scale.
+  - Third try: with Notepad set to Tahoma 11 pt in the test bottle, the text was a normal size. That font change is a Notepad setting only and is not in Cellar's defaults, since games draw their own text.
+- [x] **D3DMetal imported from Kamen's own download.** He downloaded `Evaluation_environment_for_Windows_games_3.0.dmg` from Apple and ran `cellar d3dmetal import` himself. `cellar d3dmetal status` shows `D3DMetal 3.0`.
+
+**M0: done (2026-10-17).**
