@@ -32,7 +32,7 @@ public enum SteamLogs {
     }
 
     public static func signIn(connectionLog: String) -> SignInState {
-        for line in connectionLog.split(separator: "\n").reversed() {
+        for line in connectionLog.split(whereSeparator: \.isNewline).reversed() {
             guard let time = timestamp(line) else { continue }
             if line.contains("[Logged On,") { return .signedIn(since: time) }
             if line.contains("[Logged Off,") { return .signedOut(since: time) }
@@ -41,14 +41,14 @@ public enum SteamLogs {
     }
 
     public static func webhelperLaunches(webhelperLog: String, since: Date) -> Int {
-        webhelperLog.split(separator: "\n").count { line in
+        webhelperLog.split(whereSeparator: \.isNewline).count { line in
             guard line.contains("Startup - webhelper launched pid:"), let time = timestamp(line) else { return false }
             return time >= since
         }
     }
 
     public static func lastUpdateCheck(bootstrapLog: String) -> Date? {
-        for line in bootstrapLog.split(separator: "\n").reversed()
+        for line in bootstrapLog.split(whereSeparator: \.isNewline).reversed()
         where line.contains("checking for update") || line.contains("Nothing to do") {
             if let time = timestamp(line) { return time }
         }

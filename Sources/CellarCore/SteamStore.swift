@@ -165,7 +165,7 @@ public struct SteamStore: Sendable {
     public func processes() async throws -> [String] {
         let result = try await bottles.runner(for: name, mode: .headless)
             .wine(["tasklist", "/fo", "csv", "/nh"], timeout: commandTimeout)
-        return result.output.split(separator: "\n").compactMap { line in
+        return result.output.split(whereSeparator: \.isNewline).compactMap { line in
             guard line.hasPrefix("\""), let close = line.dropFirst().firstIndex(of: "\"") else { return nil }
             return line[line.index(after: line.startIndex)..<close].lowercased()
         }

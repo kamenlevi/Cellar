@@ -66,8 +66,9 @@ private struct SteamRig {
     }
 
     func setTasklist(_ names: [String]) throws {
-        let csv = names.map { "\"\($0)\",\"32\",\"Console\",\"1\",\"24,512 K\"" }.joined(separator: "\n")
-        try Data((csv + "\n").utf8).write(to: tasklist)
+        // Real tasklist output has Windows line endings.
+        let csv = names.map { "\"\($0)\",\"32\",\"Console\",\"1\",\"24,512 K\"" }.joined(separator: "\r\n")
+        try Data((csv + "\r\n").utf8).write(to: tasklist)
     }
 
     func installedStore(macSteam: Bool = false) async throws -> SteamStore {
@@ -243,4 +244,11 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     let s = try await steam.status()
     #expect(Date().timeIntervalSince(t0) < 15)
     #expect(s.installed && !s.running)
+}
+
+@Test func processListWithWindowsLineEndingsFindsEveryProcess() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["plugplay.exe", "explorer.exe", "steam.exe", "steamwebhelper.exe"])
+    #expect(try await steam.processes() == ["plugplay.exe", "explorer.exe", "steam.exe", "steamwebhelper.exe"])
 }
