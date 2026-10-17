@@ -72,3 +72,12 @@ func menuBuilderIsDisabled(_ mode: WineMode) throws {
     let env = WineEnvironment.make(engine: engine, prefix: URL(filePath: "/tmp/p"), mode: mode, base: [:])
     #expect(env["WINEDLLOVERRIDES"]!.contains("winemenubuilder.exe=d"))
 }
+
+/// MoltenVK lists all 153 Vulkan extensions on every start at its default log level.
+@Test func moltenVKLogsErrorsOnly() throws {
+    let tmp = try TempRoot()
+    let engine = try FakeEngine.installed(in: tmp.url)
+    let env = WineEnvironment.make(engine: engine, prefix: URL(filePath: "/tmp/p"), mode: .interactive,
+                                   base: ["MVK_CONFIG_LOG_LEVEL": "3"])
+    #expect(env["MVK_CONFIG_LOG_LEVEL"] == "1")
+}

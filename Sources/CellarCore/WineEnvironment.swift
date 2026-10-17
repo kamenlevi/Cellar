@@ -19,6 +19,8 @@ public enum WineEnvironment {
         var env = base.filter { !$0.key.hasPrefix("WINE") && !$0.key.hasPrefix("DYLD_") }
         env["WINEPREFIX"] = prefix.path
         env["WINEDEBUG"] = "-all"
+        // Errors only: at its default level MoltenVK lists every Vulkan extension on each start.
+        env["MVK_CONFIG_LOG_LEVEL"] = "1"
         // The engine's libraries are found through the fallback path, not baked-in rpaths.
         env["DYLD_FALLBACK_LIBRARY_PATH"] = [
             engine.frameworks.path,

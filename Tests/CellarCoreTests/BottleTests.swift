@@ -61,6 +61,19 @@ func invalidNames(_ s: String) { #expect(throws: BottleError.self) { try BottleN
     #expect(text.contains(#""RetinaMode"="y""#))
 }
 
+/// With Retina mode on, Windows must also be told the screen is 200% (192 DPI), as Windows itself
+/// would be on a Retina-class display; at the default 96 DPI every menu and font draws at half size.
+@Test func defaultsSetWindowsTo200PercentScaling() throws {
+    let url = try #require(BottleStore.defaultsRegistryFile)
+    let text = try String(contentsOf: url, encoding: .utf8)
+    let sections = text.components(separatedBy: "\n[").map { "[" + $0 }
+    for key in [#"[HKEY_CURRENT_USER\Control Panel\Desktop]"#,
+                #"[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Hardware Profiles\Current\Software\Fonts]"#] {
+        let section = try #require(sections.first { $0.hasPrefix(key) }, "\(key) missing")
+        #expect(section.contains(#""LogPixels"=dword:000000c0"#), "\(key) has no 192 DPI")
+    }
+}
+
 @Test func createTwiceThrowsExists() async throws {
     let rig = try Rig()
     _ = try await rig.store.create(BottleName("Outer Wilds"), engineId: "fake")
