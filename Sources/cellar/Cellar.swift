@@ -4,6 +4,25 @@ import Foundation
 
 @main
 struct Cellar: AsyncParsableCommand {
+    /// Cellar's own errors print as a sentence and the fix, not as Swift values.
+    static func main() async {
+        do {
+            var command = try parseAsRoot()
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+        } catch let error as LocalizedError where error.errorDescription != nil && !(error is ExitCode) {
+            var message = "Error: \(error.errorDescription!)"
+            if let fix = error.recoverySuggestion { message += "\n  \(fix)" }
+            FileHandle.standardError.write(Data((message + "\n").utf8))
+            Foundation.exit(1)
+        } catch {
+            exit(withError: error)
+        }
+    }
+
     static let configuration = CommandConfiguration(
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
