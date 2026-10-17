@@ -9,6 +9,7 @@ private struct SteamRig {
     let calls: URL
     let serverCalls: URL
     let tasklist: URL
+    let hang: URL
     let bottles: BottleStore
     let engines: EngineStore
 
@@ -17,6 +18,7 @@ private struct SteamRig {
         calls = tmp.url.appending(path: "calls.txt")
         serverCalls = tmp.url.appending(path: "server-calls.txt")
         tasklist = tmp.url.appending(path: "tasklist.csv")
+        hang = tmp.url.appending(path: "hang")
         let install = installerInstalls
             ? #"mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe""#
             : "true"
@@ -26,7 +28,7 @@ private struct SteamRig {
         mkdir -p "$WINEPREFIX" && touch "$WINEPREFIX/user.reg"
         case "$1" in
           *SteamSetup.exe) [ "$2" = "/S" ] && \(install) ;;
-          tasklist) cat '\(tasklist.path)' 2>/dev/null ;;
+          tasklist) [ -f '\(hang.path)' ] && sleep 30; cat '\(tasklist.path)' 2>/dev/null ;;
         esac
         [ "$2" = "-shutdown" ] && rm -f '\(tasklist.path)'
         exit 0
@@ -40,14 +42,23 @@ private struct SteamRig {
     func store(installer: URL? = nil, macSteam: Bool = false) throws -> SteamStore {
         let source = try installer ?? fakeInstaller()
         return SteamStore(paths: tmp.paths, bottles: bottles, engines: engines,
-                          installer: source, engineId: "fake", macSteam: { macSteam })
+                          installer: source, engineId: "fake", macSteam: { macSteam }, commandTimeout: .seconds(2))
     }
 
     func fakeInstaller(_ body: Data? = nil) throws -> URL {
         let url = tmp.url.appending(path: "src/SteamSetup.exe")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try (body ?? (Data("MZ".utf8) + Data(count: 2_000_000))).write(to: url)
+        try (body ?? SteamRig.peFile(size: 2_000_000)).write(to: url)
         return url
+    }
+
+    /// "MZ", e_lfanew = 0x80 at 0x3C, "PE\0\0" at 0x80, padded to `size`.
+    static func peFile(size: Int, peSignature: Bool = true) -> Data {
+        var d = Data(count: size)
+        d[0] = 0x4D; d[1] = 0x5A
+        d[0x3C] = 0x80
+        if peSignature { d[0x80] = 0x50; d[0x81] = 0x45 }
+        return d
     }
 
     func lines(_ url: URL) -> [String] {
@@ -133,7 +144,8 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     #expect(try await steam.start() == .started)
     #expect(await rig.waitForCall(containing: "steam.exe -no-cef-sandbox"))
     #expect(!rig.lines(rig.calls).contains { $0.contains("-silent") })
-    #expect(rig.lines(rig.serverCalls).isEmpty)
+    // The check ran headless (no display driver); Steam must not join that session.
+    #expect(rig.lines(rig.serverCalls) == ["-k", "-w"])
 }
 
 @Test func startWhenSteamRunsBringsItForward() async throws {
@@ -158,7 +170,7 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     let steam = try await rig.installedStore()
     try rig.setTasklist(["tasklist.exe", "services.exe", "explorer.exe", "plugplay.exe", "winedevice.exe", "svchost.exe", "rpcss.exe", "conhost.exe"])
     #expect(try await steam.start() == .started)
-    #expect(rig.lines(rig.serverCalls).isEmpty)
+    #expect(rig.lines(rig.serverCalls) == ["-k", "-w"])
 }
 
 @Test func stopShutsDownGracefullyThenKills() async throws {
@@ -202,4 +214,33 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     #expect(lines.first == "Installed: yes")
     #expect(lines.allSatisfy { !$0.contains("[U:1:") })
     #expect(lines.contains { $0.hasPrefix("Crash loop: YES — 6 web-helper starts in 10 minutes") })
+}
+
+// MARK: - Final review fixes
+
+@Test func installerWithoutAPESignatureIsNeverRun() async throws {
+    let rig = try SteamRig()
+    let steam = try rig.store(installer: try rig.fakeInstaller(SteamRig.peFile(size: 2_000_000, peSignature: false)))
+    await #expect(throws: SteamError.self) { try await steam.install() }
+    #expect(!rig.lines(rig.calls).contains { $0.contains("SteamSetup.exe") })
+}
+
+@Test func aHungSessionIsTreatedAsStuckInsteadOfHangingForever() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try Data().write(to: rig.hang)
+    let t0 = Date()
+    #expect(try await steam.start() == .clearedStaleStateThenStarted)
+    #expect(Date().timeIntervalSince(t0) < 15)
+    #expect(rig.lines(rig.serverCalls).first == "-k")
+}
+
+@Test func statusOfAHungSessionReturns() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try Data().write(to: rig.hang)
+    let t0 = Date()
+    let s = try await steam.status()
+    #expect(Date().timeIntervalSince(t0) < 15)
+    #expect(s.installed && !s.running)
 }

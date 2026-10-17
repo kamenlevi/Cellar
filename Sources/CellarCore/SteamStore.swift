@@ -68,16 +68,20 @@ public struct SteamStore: Sendable {
     let installer: URL
     let engineId: String?
     let macSteam: @Sendable () -> Bool
+    /// How long `tasklist` and `-shutdown` may take before the session counts as stuck.
+    let commandTimeout: Duration
 
     public init(paths: CellarPaths, bottles: BottleStore, engines: EngineStore,
                 installer: URL = SteamStore.installerURL, engineId: String? = nil,
-                macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning) {
+                macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning,
+                commandTimeout: Duration = .seconds(15)) {
         self.paths = paths
         self.bottles = bottles
         self.engines = engines
         self.installer = installer
         self.engineId = engineId
         self.macSteam = macSteam
+        self.commandTimeout = commandTimeout
     }
 
     var name: BottleName { try! BottleName(Self.bottleName) }
@@ -133,6 +137,10 @@ public struct SteamStore: Sendable {
             throw SteamError.badInstaller("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
         }
         try fm.moveItem(at: temporary, to: part)
+        let size = (try fm.attributesOfItem(atPath: part.path)[.size] as? NSNumber)?.int64Value ?? 0
+        if response.expectedContentLength > 0, size != response.expectedContentLength {
+            throw SteamError.badInstaller("download cut off at \(size) of \(response.expectedContentLength) bytes")
+        }
     }
 
     /// A Windows program (starts with "MZ") of a plausible size; anything else is never run.
@@ -141,13 +149,22 @@ public struct SteamStore: Sendable {
         guard (1_000_000...20_000_000).contains(size) else { throw SteamError.badInstaller("unexpected size \(size) bytes") }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
-        guard try handle.read(upToCount: 2) == Data("MZ".utf8) else { throw SteamError.badInstaller("not a Windows program") }
+        let head = try handle.read(upToCount: 0x40) ?? Data()
+        guard head.count == 0x40, head.prefix(2) == Data("MZ".utf8) else { throw SteamError.badInstaller("not a Windows program") }
+        // e_lfanew at 0x3C points at the "PE\0\0" signature.
+        let peOffset = head[0x3C...0x3F].enumerated().reduce(0) { $0 | Int($1.element) << (8 * $1.offset) }
+        guard peOffset < size - 4 else { throw SteamError.badInstaller("not a Windows program") }
+        try handle.seek(toOffset: UInt64(peOffset))
+        guard try handle.read(upToCount: 4) == Data([0x50, 0x45, 0, 0]) else {
+            throw SteamError.badInstaller("not a Windows program")
+        }
     }
 
     // MARK: - Run
 
     public func processes() async throws -> [String] {
-        let result = try await bottles.runner(for: name, mode: .headless).wine(["tasklist", "/fo", "csv", "/nh"])
+        let result = try await bottles.runner(for: name, mode: .headless)
+            .wine(["tasklist", "/fo", "csv", "/nh"], timeout: commandTimeout)
         return result.output.split(separator: "\n").compactMap { line in
             guard line.hasPrefix("\""), let close = line.dropFirst().firstIndex(of: "\"") else { return nil }
             return line[line.index(after: line.startIndex)..<close].lowercased()
@@ -156,16 +173,23 @@ public struct SteamStore: Sendable {
 
     public func start() async throws -> StartOutcome {
         guard isInstalled() else { throw SteamError.notInstalled }
-        let running = try await processes()
-        let outcome: StartOutcome
-        if running.contains("steam.exe") {
-            // Steam hands this to the instance that's already running, which shows its window.
-            outcome = .broughtForward
-        } else if running.contains(where: { !Self.wineSystemProcesses.contains($0) }) {
+        var outcome: StartOutcome
+        do {
+            let running = try await processes()
+            if running.contains("steam.exe") {
+                // Steam hands this to the instance that's already running, which shows its window.
+                outcome = .broughtForward
+            } else {
+                outcome = running.contains(where: { !Self.wineSystemProcesses.contains($0) })
+                    ? .clearedStaleStateThenStarted : .started
+                // Always end the session first: the check above ran headless (no display driver), and a
+                // Steam started inside that session would get no window.
+                try await bottles.kill(name)
+            }
+        } catch WineRunnerError.timedOut {
+            // The session doesn't answer: it's stuck.
             try await bottles.kill(name)
             outcome = .clearedStaleStateThenStarted
-        } else {
-            outcome = .started
         }
         try bottles.runner(for: name, mode: .interactive).spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder)
         return outcome
@@ -173,10 +197,11 @@ public struct SteamStore: Sendable {
 
     public func stop() async throws {
         guard isInstalled() else { throw SteamError.notInstalled }
-        if try await processes().contains("steam.exe") {
-            _ = try await bottles.runner(for: name, mode: .headless).wine([steamExe.path, "-shutdown"], cwd: steamFolder)
+        if (try? await processes())?.contains("steam.exe") == true {
+            _ = try? await bottles.runner(for: name, mode: .headless)
+                .wine([steamExe.path, "-shutdown"], cwd: steamFolder, timeout: commandTimeout)
             for _ in 0..<30 {
-                if try await !processes().contains("steam.exe") { break }
+                guard let running = try? await processes(), running.contains("steam.exe") else { break }
                 try await Task.sleep(for: .seconds(1))
             }
         }
@@ -190,7 +215,8 @@ public struct SteamStore: Sendable {
 
     public func status() async throws -> SteamStatus {
         let installed = isInstalled()
-        let running = installed ? try await processes() : []
+        // A session that doesn't answer in time is reported as not running.
+        let running = installed ? ((try? await processes()) ?? []) : []
         let logs = steamFolder.appending(path: "logs")
         func tail(_ file: String) -> String {
             guard let handle = try? FileHandle(forReadingFrom: logs.appending(path: file)) else { return "" }

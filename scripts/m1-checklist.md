@@ -11,5 +11,6 @@ Kamen's hands-on checks, in the real Cellar folder (`~/Library/Application Suppo
 5. **Recovers from a hard stop.** Run `cellar bottle kill Steam`, then `cellar steam`. It says `Cleared a stuck Steam session…` or `Starting Steam…`, and you're still signed in.
 6. **Never two Steams.** Run `cellar steam` while Steam is open. It says `bringing its window forward`. There's one Steam window and at most two Dock icons, which is accepted (spec section 8).
 7. **One week later (2026-10-24 or after).** Run `cellar steam`, then `cellar steam status`. You're still signed in, there's no crash loop, and `Last update check` falls within the week. That shows Steam updated itself without breaking.
+8. **Your account id stays out of Cellar's log.** After step 1, run `grep -c '\[U:1:[0-9]' ~/Library/Logs/Cellar/Steam.log`. It prints `0`.
 
-Write down what you saw in `docs/m1-signoff.md`. M1 is done when all seven pass.
+Write down what you saw in `docs/m1-signoff.md`. M1 is done when all eight pass.

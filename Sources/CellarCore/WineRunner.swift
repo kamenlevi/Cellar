@@ -1,5 +1,10 @@
 import Foundation
 
+public enum WineRunnerError: Error, Equatable {
+    /// The program didn't finish in time and was stopped (a wedged wineserver looks like this).
+    case timedOut(String)
+}
+
 public struct WineResult: Sendable {
     public let exitCode: Int32
     /// Everything the program printed (stdout and stderr), up to the last 64 KB.
@@ -20,12 +25,13 @@ public struct WineRunner: Sendable {
         self.logFile = logFile
     }
 
-    public func wine(_ args: [String], cwd: URL? = nil) async throws -> WineResult {
-        try await run(engine.wineBinary, args, cwd: cwd)
+    /// With a `timeout`, a program still running when it expires is stopped and `WineRunnerError.timedOut` thrown.
+    public func wine(_ args: [String], cwd: URL? = nil, timeout: Duration? = nil) async throws -> WineResult {
+        try await run(engine.wineBinary, args, cwd: cwd, timeout: timeout)
     }
 
     public func wineserver(_ args: [String]) async throws -> WineResult {
-        try await run(engine.wineserverBinary, args, cwd: nil)
+        try await run(engine.wineserverBinary, args, cwd: nil, timeout: nil)
     }
 
     /// Starts `wine args` and returns its pid at once, without waiting for it to finish.
@@ -49,11 +55,12 @@ public struct WineRunner: Sendable {
         return process.processIdentifier
     }
 
-    private func run(_ binary: URL, _ args: [String], cwd: URL?) async throws -> WineResult {
+    private func run(_ binary: URL, _ args: [String], cwd: URL?, timeout: Duration?) async throws -> WineResult {
         let log = try openLog()
         defer { try? log.close() }
         try log.write(contentsOf: Data(header(binary, args).utf8))
         let start = try currentSize()
+        let timedOut = Flag()
 
         // Output goes straight to the log file rather than a pipe: wineserver lingers after wine exits
         // and would keep a pipe open.
@@ -61,7 +68,17 @@ public struct WineRunner: Sendable {
         let code: Int32 = try await withCheckedThrowingContinuation { continuation in
             process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
             do { try process.run() } catch { continuation.resume(throwing: error) }
+            if let timeout {
+                let pid = process.processIdentifier
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) {
+                    if process.isRunning {
+                        timedOut.set()
+                        kill(pid, SIGKILL)
+                    }
+                }
+            }
         }
+        if timedOut.isSet { throw WineRunnerError.timedOut(args.first ?? binary.lastPathComponent) }
 
         let reader = try FileHandle(forReadingFrom: logFile)
         defer { try? reader.close() }
@@ -108,4 +125,15 @@ private final class LiveProcesses: @unchecked Sendable {
 
     func keep(_ p: Process) { lock.withLock { processes[ObjectIdentifier(p)] = p } }
     func release(_ p: Process) { lock.withLock { processes[ObjectIdentifier(p)] = nil } }
+}
+
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.withLock { value = true } }
+    var isSet: Bool { lock.withLock { value } }
+}
+
+extension Duration {
+    var seconds: Double { Double(components.seconds) + Double(components.attoseconds) / 1e18 }
 }
