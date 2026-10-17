@@ -13,7 +13,7 @@ struct Cellar: AsyncParsableCommand {
             } else {
                 try command.run()
             }
-        } catch let error as LocalizedError where error.errorDescription != nil && !(error is ExitCode) {
+        } catch let error as LocalizedError where error.errorDescription != nil {
             var message = "Error: \(error.errorDescription!)"
             if let fix = error.recoverySuggestion { message += "\n  \(fix)" }
             FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -27,7 +27,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [DoctorCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
+        subcommands: [DoctorCommand.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
     )
 }
 
@@ -182,6 +182,80 @@ struct D3DMetalCommand: AsyncParsableCommand {
             } else {
                 print("Not imported. Sign in at \(Doctor.gptkURL), download the Game Porting Toolkit .dmg, then run: cellar d3dmetal import ~/Downloads/<file>.dmg")
             }
+        }
+    }
+}
+
+func steamStore() -> SteamStore {
+    let paths = CellarPaths()
+    let engines = EngineStore(paths: paths)
+    return SteamStore(paths: paths, bottles: BottleStore(paths: paths, engines: engines), engines: engines)
+}
+
+struct SteamCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "steam",
+        abstract: "Windows Steam, in Cellar's shared \"Steam\" bottle. You sign in yourself.",
+        subcommands: [Start.self, Install.self, Stop.self, Restart.self, Status.self],
+        defaultSubcommand: Start.self
+    )
+
+    static func say(_ outcome: StartOutcome) {
+        switch outcome {
+        case .started: print("Starting Steam. Sign in with your own account in the Steam window.")
+        case .broughtForward: print("Steam is already running; bringing its window forward.")
+        case .clearedStaleStateThenStarted: print("Cleared a stuck Steam session, then started Steam.")
+        }
+    }
+
+    static func warnAboutMacSteam() {
+        if MacSteam.isRunning() {
+            print("Note: Steam for Mac is running too. If Windows Steam can't connect, quit Steam for Mac (Steam ▸ Quit Steam) and run: cellar steam restart")
+        }
+    }
+
+    struct Install: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Install Windows Steam into the \"Steam\" bottle.")
+        func run() async throws {
+            try Doctor(paths: CellarPaths()).requireRosetta()
+            print("Installing Steam into the \"Steam\" bottle…")
+            try await steamStore().install()
+            print("Steam is installed. Start it with: cellar steam start")
+        }
+    }
+
+    struct Start: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Start Steam, or bring its window forward if it's running.")
+        func run() async throws {
+            try Doctor(paths: CellarPaths()).requireRosetta()
+            SteamCommand.warnAboutMacSteam()
+            SteamCommand.say(try await steamStore().start())
+        }
+    }
+
+    struct Stop: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Quit Steam and everything in its bottle.")
+        func run() async throws {
+            try Doctor(paths: CellarPaths()).requireRosetta()
+            try await steamStore().stop()
+            print("Steam stopped.")
+        }
+    }
+
+    struct Restart: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Stop Steam, then start it again.")
+        func run() async throws {
+            try Doctor(paths: CellarPaths()).requireRosetta()
+            SteamCommand.warnAboutMacSteam()
+            SteamCommand.say(try await steamStore().restart())
+        }
+    }
+
+    struct Status: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Is Steam installed, running, signed in and healthy?")
+        func run() async throws {
+            try Doctor(paths: CellarPaths()).requireRosetta()
+            for line in try await steamStore().status().lines() { print(line) }
         }
     }
 }

@@ -16,3 +16,13 @@ cellar d3dmetal import ~/Downloads/<Game Porting Toolkit>.dmg   # Apple's D3DMet
 ```
 
 Tests: `swift test`. The real-Wine test runs with `CELLAR_INTEGRATION=1 swift test` (headless; set `CELLAR_ENGINE_TARBALL` to use a local engine tarball). The whole M0 check is `scripts/m0-acceptance.sh`.
+
+## Steam (M1)
+
+```bash
+cellar steam install   # Windows Steam into the shared "Steam" bottle
+cellar steam           # start it (or bring its window forward); sign in yourself
+cellar steam status    # installed, running, signed in, crash loop, last update check
+cellar steam restart   # if it gets stuck
+cellar steam stop
+```
