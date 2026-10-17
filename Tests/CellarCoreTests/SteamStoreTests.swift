@@ -1,0 +1,205 @@
+import Foundation
+import Testing
+@testable import CellarCore
+
+/// A Steam bottle over a fake engine. The fake `wine` records every call, installs a fake Steam when
+/// SteamSetup.exe runs with /S, answers `tasklist` from a file, and empties that file on `-shutdown`.
+private struct SteamRig {
+    let tmp: TempRoot
+    let calls: URL
+    let serverCalls: URL
+    let tasklist: URL
+    let bottles: BottleStore
+    let engines: EngineStore
+
+    init(installerInstalls: Bool = true) throws {
+        tmp = try TempRoot(rootName: "Cellar Steam")
+        calls = tmp.url.appending(path: "calls.txt")
+        serverCalls = tmp.url.appending(path: "server-calls.txt")
+        tasklist = tmp.url.appending(path: "tasklist.csv")
+        let install = installerInstalls
+            ? #"mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe""#
+            : "true"
+        let wine = """
+        #!/bin/sh
+        printf "%s\\n" "$*" >> '\(calls.path)'
+        mkdir -p "$WINEPREFIX" && touch "$WINEPREFIX/user.reg"
+        case "$1" in
+          *SteamSetup.exe) [ "$2" = "/S" ] && \(install) ;;
+          tasklist) cat '\(tasklist.path)' 2>/dev/null ;;
+        esac
+        [ "$2" = "-shutdown" ] && rm -f '\(tasklist.path)'
+        exit 0
+        """
+        let wineserver = "#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> '\(serverCalls.path)'\n"
+        try FakeEngine.installed(id: "fake", in: tmp.paths.engines, wine: wine, wineserver: wineserver)
+        engines = EngineStore(paths: tmp.paths, discard: TempRoot.discard)
+        bottles = BottleStore(paths: tmp.paths, engines: engines, discard: TempRoot.discard)
+    }
+
+    func store(installer: URL? = nil, macSteam: Bool = false) throws -> SteamStore {
+        let source = try installer ?? fakeInstaller()
+        return SteamStore(paths: tmp.paths, bottles: bottles, engines: engines,
+                          installer: source, engineId: "fake", macSteam: { macSteam })
+    }
+
+    func fakeInstaller(_ body: Data? = nil) throws -> URL {
+        let url = tmp.url.appending(path: "src/SteamSetup.exe")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (body ?? (Data("MZ".utf8) + Data(count: 2_000_000))).write(to: url)
+        return url
+    }
+
+    func lines(_ url: URL) -> [String] {
+        ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    func setTasklist(_ names: [String]) throws {
+        let csv = names.map { "\"\($0)\",\"32\",\"Console\",\"1\",\"24,512 K\"" }.joined(separator: "\n")
+        try Data((csv + "\n").utf8).write(to: tasklist)
+    }
+
+    func installedStore(macSteam: Bool = false) async throws -> SteamStore {
+        let s = try store(macSteam: macSteam)
+        try await s.install()
+        try? FileManager.default.removeItem(at: calls)
+        try? FileManager.default.removeItem(at: serverCalls)
+        return s
+    }
+
+    func waitForCall(containing text: String) async -> Bool {
+        for _ in 0..<50 {
+            if lines(calls).contains(where: { $0.contains(text) }) { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return false
+    }
+}
+
+// MARK: - Task 4: install
+
+@Test func installCreatesTheSteamBottleAndRunsTheInstallerSilently() async throws {
+    let rig = try SteamRig()
+    let steam = try rig.store()
+    try await steam.install()
+    #expect(try rig.bottles.list().map(\.name) == ["Steam"])
+    #expect(steam.isInstalled())
+    #expect(rig.lines(rig.calls).contains { $0.hasSuffix("SteamSetup.exe /S") })
+    let downloads = (try? FileManager.default.contentsOfDirectory(atPath: rig.tmp.paths.downloads.path)) ?? []
+    #expect(downloads.isEmpty, "\(downloads)")
+}
+
+@Test(arguments: ["<html>Access denied</html>", "MZ"])
+func badInstallerIsNeverRun(_ body: String) async throws {
+    let rig = try SteamRig()
+    let steam = try rig.store(installer: try rig.fakeInstaller(Data(body.utf8)))
+    await #expect(throws: SteamError.self) { try await steam.install() }
+    #expect(!rig.lines(rig.calls).contains { $0.contains("SteamSetup.exe") })
+    let downloads = (try? FileManager.default.contentsOfDirectory(atPath: rig.tmp.paths.downloads.path)) ?? []
+    #expect(downloads.isEmpty, "\(downloads)")
+}
+
+@Test func installerThatInstallsNothingFails() async throws {
+    let rig = try SteamRig(installerInstalls: false)
+    let steam = try rig.store()
+    do {
+        try await steam.install()
+        Issue.record("install should have failed")
+    } catch SteamError.installFailed {
+    }
+}
+
+@Test func installTwiceIsANoOp() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try await steam.install()
+    #expect(rig.lines(rig.calls).isEmpty)
+}
+
+@Test func steamExeIsFoundWhateverItsCase() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    let folder = steam.steamFolder
+    try FileManager.default.moveItem(at: folder.appending(path: "steam.exe"), to: folder.appending(path: "Steam.exe"))
+    #expect(steam.steamExe.lastPathComponent == "Steam.exe")
+    #expect(steam.isInstalled())
+}
+
+// MARK: - Task 5: start, stop, status
+
+@Test func startWhenNothingRunsSpawnsSteamWithTheSandboxFlag() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    #expect(try await steam.start() == .started)
+    #expect(await rig.waitForCall(containing: "steam.exe -no-cef-sandbox"))
+    #expect(!rig.lines(rig.calls).contains { $0.contains("-silent") })
+    #expect(rig.lines(rig.serverCalls).isEmpty)
+}
+
+@Test func startWhenSteamRunsBringsItForward() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    #expect(try await steam.start() == .broughtForward)
+    #expect(rig.lines(rig.serverCalls).isEmpty)
+}
+
+@Test func startClearsStaleStateFirst() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["explorer.exe", "services.exe", "steamwebhelper.exe"])
+    #expect(try await steam.start() == .clearedStaleStateThenStarted)
+    #expect(rig.lines(rig.serverCalls).first == "-k")
+    #expect(await rig.waitForCall(containing: "steam.exe -no-cef-sandbox"))
+}
+
+@Test func wineSystemProcessesAloneAreNotAStuckSession() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["tasklist.exe", "services.exe", "explorer.exe", "plugplay.exe", "winedevice.exe", "svchost.exe", "rpcss.exe", "conhost.exe"])
+    #expect(try await steam.start() == .started)
+    #expect(rig.lines(rig.serverCalls).isEmpty)
+}
+
+@Test func stopShutsDownGracefullyThenKills() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["steam.exe"])
+    try await steam.stop()
+    #expect(rig.lines(rig.calls).contains { $0.hasSuffix("steam.exe -shutdown") })
+    #expect(rig.lines(rig.serverCalls) == ["-k", "-w"])
+}
+
+@Test func statusCombinesProcessesAndLogs() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore(macSteam: true)
+    let logs = steam.steamFolder.appending(path: "logs")
+    try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+    try Data(SteamLogFixtures.connectionSignedIn.utf8).write(to: logs.appending(path: "connection_log.txt"))
+    try Data(SteamLogFixtures.webhelperHealthy.utf8).write(to: logs.appending(path: "webhelper.txt"))
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    let s = try await steam.status()
+    #expect(s.installed && s.running && s.webhelperRunning && s.macSteamRunning)
+    #expect(s.health.signIn == .signedIn(since: SteamLogFixtures.local("2026-08-17 00:22:49")))
+    #expect(!s.health.crashLoop)
+}
+
+@Test func startOnUninstalledThrows() async throws {
+    let rig = try SteamRig()
+    await #expect(throws: SteamError.notInstalled) { try await rig.store().start() }
+}
+
+// MARK: - Task 6: status lines
+
+@Test func statusLinesNeverShowAccountIds() {
+    let s = SteamStatus(installed: true, running: true, webhelperRunning: true, macSteamRunning: false,
+                        health: SteamLogs.health(connectionLog: SteamLogFixtures.connectionSignedIn,
+                                                 webhelperLog: SteamLogFixtures.webhelperCrashLoop,
+                                                 bootstrapLog: SteamLogFixtures.bootstrap,
+                                                 now: SteamLogFixtures.local("2026-08-11 16:39:30")))
+    let lines = s.lines()
+    #expect(lines.count == 7)
+    #expect(lines.first == "Installed: yes")
+    #expect(lines.allSatisfy { !$0.contains("[U:1:") })
+    #expect(lines.contains { $0.hasPrefix("Crash loop: YES — 6 web-helper starts in 10 minutes") })
+}

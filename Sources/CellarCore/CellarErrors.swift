@@ -59,3 +59,21 @@ extension DoctorError: LocalizedError {
     public var errorDescription: String? { "Rosetta 2 is not installed." }
     public var recoverySuggestion: String? { "Run: softwareupdate --install-rosetta --agree-to-license" }
 }
+
+extension SteamError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .notInstalled: "Steam isn't installed in Cellar yet."
+        case .badInstaller(let reason): "The Steam installer download wasn't valid (\(reason)), so nothing was run."
+        case .installFailed(let reason): "Steam's installer finished but Steam.exe isn't there (\(reason))."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .notInstalled: "Run: cellar steam install"
+        case .badInstaller: "Try again: cellar steam install"
+        case .installFailed: "See the log: ~/Library/Logs/Cellar/Steam.log"
+        }
+    }
+}

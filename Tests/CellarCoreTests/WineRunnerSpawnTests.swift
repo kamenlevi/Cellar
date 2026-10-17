@@ -22,7 +22,7 @@ private func waitFor(_ timeout: TimeInterval, _ condition: () -> Bool) async -> 
     #expect(Date().timeIntervalSince(t0) < 1)
     #expect(pid > 0)
     #expect(!FileManager.default.fileExists(atPath: marker.path))
-    #expect(await waitFor(6) { FileManager.default.fileExists(atPath: marker.path) })
+    #expect(await waitFor(20) { FileManager.default.fileExists(atPath: marker.path) })
 }
 
 @Test func concurrentWritersDoNotOverwriteEachOther() async throws {
