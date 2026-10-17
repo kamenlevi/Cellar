@@ -74,3 +74,25 @@ private func fakeGPTk(in base: URL, version: String = "3.0") throws {
     #expect(disk.ok == false)
     #expect(disk.fix == "Free up space on the startup disk")
 }
+
+// Final review fixes
+
+@Test func folderImportNeverMountsDiskImages() async throws {
+    let tmp = try TempRoot()
+    let downloads = tmp.url.appending(path: "Downloads")
+    try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+    try Data("not a disk image".utf8).write(to: downloads.appending(path: "Something Else.dmg"))
+    await #expect(throws: D3DMetalError.notFound(downloads.path)) {
+        try await D3DMetalStore(paths: tmp.paths).importFrom(downloads)
+    }
+}
+
+@Test func d3dmetalLeftoverStagingIsCleared() async throws {
+    let tmp = try TempRoot()
+    let stale = tmp.paths.d3dmetal.appending(path: ".staging-old")
+    try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+    let source = tmp.url.appending(path: "gptk")
+    try fakeGPTk(in: source)
+    _ = try await D3DMetalStore(paths: tmp.paths).importFrom(source)
+    #expect(!FileManager.default.fileExists(atPath: stale.path))
+}

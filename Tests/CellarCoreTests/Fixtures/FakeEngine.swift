@@ -62,13 +62,19 @@ final class TempRoot {
     let url: URL
     let paths: CellarPaths
 
-    init() throws {
-        url = FileManager.default.temporaryDirectory.appending(path: "cellar-test-\(UUID().uuidString)")
+    private let top: URL
+
+    /// `rootName` puts CELLAR_HOME one level down under that name, e.g. to test paths with spaces.
+    init(rootName: String? = nil) throws {
+        let top = FileManager.default.temporaryDirectory.appending(path: "cellar-test-\(UUID().uuidString)")
+        let url = rootName.map { top.appending(path: $0, directoryHint: .isDirectory) } ?? top
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        self.top = top
+        self.url = url
         paths = CellarPaths(environment: ["CELLAR_HOME": url.path])
     }
 
-    deinit { try? FileManager.default.removeItem(at: url) }
+    deinit { try? FileManager.default.removeItem(at: top) }
 
     /// Tests remove for real instead of filling Kamen's Trash.
     static let discard: @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }

@@ -24,20 +24,24 @@ public struct D3DMetalStore: Sendable {
         var mounts: [URL] = []
         defer { for m in mounts.reversed() { Self.detach(m) } }
 
-        var searchRoot = source
+        clearLeftovers()
+        var lib: URL?
         if source.pathExtension.lowercased() == "dmg" {
             let mount = try Self.attach(source)
             mounts.append(mount)
-            searchRoot = mount
-        }
-        var lib = Self.findRedistLib(in: searchRoot, depth: 6)
-        // The toolkit .dmg holds a second "evaluation environment" .dmg with the files in it.
-        if lib == nil {
-            for inner in Self.findDMGs(in: searchRoot, depth: 3) {
-                let mount = try Self.attach(inner)
-                mounts.append(mount)
-                if let found = Self.findRedistLib(in: mount, depth: 6) { lib = found; break }
+            lib = Self.findRedistLib(in: mount, depth: 6)
+            // The toolkit .dmg holds a second "evaluation environment" .dmg with the files in it.
+            // Only images inside Apple's own image are opened; one that won't mount is skipped.
+            if lib == nil {
+                for inner in Self.findDMGs(in: mount, depth: 3) {
+                    guard let innerMount = try? Self.attach(inner) else { continue }
+                    mounts.append(innerMount)
+                    if let found = Self.findRedistLib(in: innerMount, depth: 6) { lib = found; break }
+                }
             }
+        } else {
+            // A plain folder is only searched, never has disk images in it opened.
+            lib = Self.findRedistLib(in: source, depth: 6)
         }
         guard let lib else { throw D3DMetalError.notFound(source.path) }
 
@@ -69,6 +73,13 @@ public struct D3DMetalStore: Sendable {
                 return try? JSONDecoder.cellar.decode(D3DMetalImport.self, from: data)
             }
             .max { $0.importedAt < $1.importedAt }
+    }
+
+    private func clearLeftovers() {
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: paths.d3dmetal.path)) ?? [] where name.hasPrefix(".staging-") {
+            try? fm.removeItem(at: paths.d3dmetal.appending(path: name))
+        }
     }
 
     // MARK: - Finding the files

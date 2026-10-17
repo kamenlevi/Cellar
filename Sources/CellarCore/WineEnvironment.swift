@@ -14,7 +14,9 @@ public enum WineEnvironment {
         mode: WineMode,
         base: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
-        var env = base
+        // Wine settings from the user's shell (WINESERVER, WINELOADER, DYLD_LIBRARY_PATH…) would point
+        // Cellar's prefix at someone else's Wine, so none of them get through.
+        var env = base.filter { !$0.key.hasPrefix("WINE") && !$0.key.hasPrefix("DYLD_") }
         env["WINEPREFIX"] = prefix.path
         env["WINEDEBUG"] = "-all"
         // The engine's libraries are found through the fallback path, not baked-in rpaths.
@@ -27,8 +29,8 @@ public enum WineEnvironment {
         env["PATH"] = [engine.wineBinary.deletingLastPathComponent().path, base["PATH"] ?? "/usr/bin:/bin"]
             .joined(separator: ":")
 
-        // No Mono or Gecko install prompts during setup.
-        var overrides = ["mscoree,mshtml="]
+        // No Mono or Gecko install prompts during setup, and no menu shortcuts written into the real home.
+        var overrides = ["mscoree,mshtml=", "winemenubuilder.exe=d"]
         if mode == .headless {
             overrides += ["winemac.drv=d", "winecoreaudio.drv=d"]
         }

@@ -49,3 +49,26 @@ import Testing
                                       logFile: tmp.url.appending(path: "l.log")).wine([exe])
     #expect(result.output.split(separator: "\n").contains("[\(exe)]"))
 }
+
+// Final review fixes
+
+@Test func inheritedWineSettingsAreDropped() throws {
+    let tmp = try TempRoot()
+    let engine = try FakeEngine.installed(in: tmp.url)
+    let base = ["WINESERVER": "/other/wineserver", "WINELOADER": "/other/wine", "WINEDLLPATH": "/other/dlls",
+                "WINEARCH": "win32", "DYLD_LIBRARY_PATH": "/other/lib", "DYLD_INSERT_LIBRARIES": "/x.dylib",
+                "HOME": "/Users/k"]
+    let env = WineEnvironment.make(engine: engine, prefix: URL(filePath: "/tmp/p"), mode: .interactive, base: base)
+    for key in ["WINESERVER", "WINELOADER", "WINEDLLPATH", "WINEARCH", "DYLD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES"] {
+        #expect(env[key] == nil, "\(key) leaked from the shell")
+    }
+    #expect(env["HOME"] == "/Users/k")
+}
+
+@Test(arguments: [WineMode.headless, .interactive])
+func menuBuilderIsDisabled(_ mode: WineMode) throws {
+    let tmp = try TempRoot()
+    let engine = try FakeEngine.installed(in: tmp.url)
+    let env = WineEnvironment.make(engine: engine, prefix: URL(filePath: "/tmp/p"), mode: mode, base: [:])
+    #expect(env["WINEDLLOVERRIDES"]!.contains("winemenubuilder.exe=d"))
+}

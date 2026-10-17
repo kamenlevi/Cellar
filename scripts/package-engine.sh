@@ -31,8 +31,24 @@ check() {
             if [ $found = 0 ]; then echo "missing: $name (needed by ${f#$root/})"; missing=1; fi
         done < <(otool -L "$f" | awk 'NR>1 {print $1}' | grep '^@rpath/' || true)
     done < <(find "$root/wine" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0)
-    if find "$root" -iname '*d3dmetal*' -o -iname '*apple_gptk*' | grep -q .; then
-        echo "D3DMetal found in the engine: it must not be redistributed"; missing=1
+    # Apple's Game Porting Toolkit files, by name. Not all of them say "d3dmetal".
+    local apple
+    apple=$(find "$root" \( -iname '*d3dmetal*' -o -iname '*apple_gptk*' -o -iname 'libd3dshared*' \
+        -o -iname 'atidxx64.dll' -o -iname 'nvngx-on-metalfx*' -o -iname 'libmetalirconverter*' \
+        -o -iname 'libdxilconv*' \) -print)
+    if [ -n "$apple" ]; then
+        echo "Apple Game Porting Toolkit files found in the engine (they must not be redistributed):"
+        echo "$apple" | sed "s|^$root/|  |"
+        missing=1
+    fi
+    # By content: with GPTK_REDIST pointing at the toolkit's redist/lib, no engine file may be a copy
+    # of one of Apple's, whatever it is called.
+    if [ -n "${GPTK_REDIST:-}" ]; then
+        local hashes
+        hashes=$(find "$GPTK_REDIST" -type f -exec shasum -a 256 {} + | awk '{print $1}' | sort -u)
+        while read -r h f; do
+            if grep -qx "$h" <<<"$hashes"; then echo "copy of an Apple toolkit file: ${f#$root/}"; missing=1; fi
+        done < <(find "$root" -type f \( -iname '*.dll' -o -iname '*.dylib' -o -iname '*.so' \) -exec shasum -a 256 {} +)
     fi
     [ $missing = 0 ] && echo "all dependencies resolve"
     return $missing

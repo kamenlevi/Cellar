@@ -83,3 +83,26 @@ private func leftovers(_ paths: CellarPaths) throws -> [String] {
     #expect(try store.installed().isEmpty)
     #expect(throws: EngineError.notInstalled("fake-1")) { try store.remove(id: "fake-1") }
 }
+
+// Final review fixes
+
+@Test func leftoversFromInterruptedInstallAreCleared() async throws {
+    let tmp = try TempRoot()
+    let fm = FileManager.default
+    let staleStaging = tmp.paths.engines.appending(path: ".staging-old")
+    try fm.createDirectory(at: staleStaging.appending(path: "big"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: tmp.paths.downloads, withIntermediateDirectories: true)
+    try Data("half".utf8).write(to: tmp.paths.downloads.appending(path: "other.part"))
+    let t = try FakeEngine.makeTarball(id: "fake-1", in: tmp.url)
+    _ = try await EngineStore(paths: tmp.paths, discard: TempRoot.discard).install(entry("fake-1", t))
+    #expect(!fm.fileExists(atPath: staleStaging.path))
+    #expect(try leftovers(tmp.paths) == ["fake-1"])
+}
+
+@Test(arguments: ["../x", "a/b", "..", ".hidden", "", "../../Applications/Foo.app/Contents/SharedSupport"])
+func engineIdsCannotEscapeTheEnginesFolder(_ id: String) async throws {
+    let tmp = try TempRoot()
+    let store = EngineStore(paths: tmp.paths, discard: TempRoot.discard)
+    #expect(throws: EngineError.invalidId(id)) { try store.remove(id: id) }
+    #expect(throws: EngineError.invalidId(id)) { _ = try store.installedEngine(id: id) }
+}

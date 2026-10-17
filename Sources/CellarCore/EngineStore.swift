@@ -20,6 +20,7 @@ public enum EngineError: Error, Equatable {
     case checksumMismatch(expected: String, actual: String)
     case badLayout(String)
     case notInstalled(String)
+    case invalidId(String)
 }
 
 /// Downloads, verifies and unpacks engines. An install either completes or leaves nothing behind.
@@ -47,6 +48,7 @@ public struct EngineStore: Sendable {
         let fm = FileManager.default
         try fm.createDirectory(at: paths.downloads, withIntermediateDirectories: true)
         try fm.createDirectory(at: paths.engines, withIntermediateDirectories: true)
+        clearLeftovers()
         let part = paths.downloads.appending(path: "\(entry.id).part")
         let staging = paths.engines.appending(path: ".staging-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer {
@@ -84,13 +86,34 @@ public struct EngineStore: Sendable {
     }
 
     public func installedEngine(id: String) throws -> InstalledEngine? {
+        try Self.validate(id)
         let engine = InstalledEngine(root: paths.engine(id), id: id)
         return FileManager.default.isExecutableFile(atPath: engine.wineBinary.path) ? engine : nil
     }
 
     public func remove(id: String) throws {
+        try Self.validate(id)
         guard try installedEngine(id: id) != nil else { throw EngineError.notInstalled(id) }
         try discard(paths.engine(id))
+    }
+
+    /// Engine ids are folder names under `engines/`; anything that could reach outside it is refused.
+    static func validate(_ id: String) throws {
+        guard !id.isEmpty, !id.hasPrefix("."), !id.contains("/"), !id.contains(":"), !id.contains("\u{0}") else {
+            throw EngineError.invalidId(id)
+        }
+    }
+
+    /// Partial downloads and staging folders left by an interrupted install (Ctrl-C, crash) are
+    /// Cellar's own temporary files: clear them before starting again.
+    private func clearLeftovers() {
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: paths.engines.path)) ?? [] where name.hasPrefix(".staging-") {
+            try? fm.removeItem(at: paths.engines.appending(path: name))
+        }
+        for name in (try? fm.contentsOfDirectory(atPath: paths.downloads.path)) ?? [] where name.hasSuffix(".part") {
+            try? fm.removeItem(at: paths.downloads.appending(path: name))
+        }
     }
 
     // MARK: - Steps
