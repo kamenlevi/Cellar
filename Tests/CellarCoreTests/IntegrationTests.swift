@@ -39,3 +39,28 @@ func realEngineInstallsAndRunsCmd() async throws {
     try await bottles.kill(name)
     try bottles.remove(name)
 }
+
+/// Real Valve installer, real engine, headless (the Steam window itself needs a display, so it isn't started).
+/// Opt in with CELLAR_INTEGRATION=1 CELLAR_STEAM=1.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["CELLAR_INTEGRATION"] == "1"
+               && ProcessInfo.processInfo.environment["CELLAR_STEAM"] == "1"),
+      .timeLimit(.minutes(20)))
+func realSteamInstallsHeadless() async throws {
+    let tmp = try TempRoot(rootName: "Cellar Steam Tést")
+    var entry = try EngineManifest.bundled().defaultEngine
+    if let local = ProcessInfo.processInfo.environment["CELLAR_ENGINE_TARBALL"] {
+        entry.url = URL(filePath: local)
+    }
+    let engines = EngineStore(paths: tmp.paths, discard: TempRoot.discard)
+    _ = try await engines.install(entry)
+    let bottles = BottleStore(paths: tmp.paths, engines: engines, discard: TempRoot.discard)
+    let steam = SteamStore(paths: tmp.paths, bottles: bottles, engines: engines, macSteam: { false })
+
+    try await steam.install()
+    #expect(steam.isInstalled())
+    let running = try await steam.processes()
+    #expect(!running.contains("steam.exe"), "\(running)")
+    let status = try await steam.status()
+    #expect(status.installed && !status.running)
+    try await steam.stop()
+}
