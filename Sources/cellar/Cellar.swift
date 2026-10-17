@@ -8,7 +8,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [EngineCommand.self]
+        subcommands: [EngineCommand.self, BottleCommand.self, Run.self]
     )
 }
 
@@ -56,5 +56,70 @@ struct EngineCommand: AsyncParsableCommand {
             try EngineStore(paths: CellarPaths()).remove(id: id)
             print("Moved \(id) to the Trash.")
         }
+    }
+}
+
+func bottleStore() -> BottleStore {
+    let paths = CellarPaths()
+    return BottleStore(paths: paths, engines: EngineStore(paths: paths))
+}
+
+struct BottleCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "bottle",
+        abstract: "Create and manage bottles (one Windows setup each).",
+        subcommands: [Create.self, List.self, Remove.self, Kill.self]
+    )
+
+    struct Create: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Create a bottle.")
+        @Argument var name: String
+        @Option(help: "Engine id (default: the pinned default engine).") var engine: String?
+        func run() async throws {
+            let info = try await bottleStore().create(BottleName(name), engineId: engine)
+            print("Created bottle \"\(info.name)\" on \(info.engineId).")
+        }
+    }
+
+    struct List: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "List bottles.")
+        func run() throws {
+            let bottles = try bottleStore().list()
+            if bottles.isEmpty { print("No bottles yet. Run: cellar bottle create <name>") }
+            for b in bottles { print("\(b.name)\t\(b.engineId)") }
+        }
+    }
+
+    struct Remove: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Move a bottle to the Trash.")
+        @Argument var name: String
+        func run() throws {
+            try bottleStore().remove(BottleName(name))
+            print("Moved bottle \"\(name)\" to the Trash.")
+        }
+    }
+
+    struct Kill: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Stop everything running in one bottle (and nothing else).")
+        @Argument var name: String
+        func run() async throws {
+            try await bottleStore().kill(BottleName(name))
+            print("Stopped everything in \"\(name)\".")
+        }
+    }
+}
+
+struct Run: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Run a Windows program in a bottle.")
+    @Flag(help: "No windows and no sound (for scripts and tests).") var headless = false
+    @Argument var bottle: String
+    @Argument var program: String
+    @Argument(parsing: .captureForPassthrough) var arguments: [String] = []
+
+    func run() async throws {
+        let result = try await bottleStore().run(BottleName(bottle), program: program, arguments: arguments,
+                                                 mode: headless ? .headless : .interactive)
+        print(result.output, terminator: "")
+        throw ExitCode(result.exitCode)
     }
 }
