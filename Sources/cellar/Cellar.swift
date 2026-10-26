@@ -27,7 +27,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [DoctorCommand.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
+        subcommands: [DoctorCommand.self, Play.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
     )
 }
 
@@ -257,6 +257,23 @@ struct SteamCommand: AsyncParsableCommand {
         func run() async throws {
             try Doctor(paths: CellarPaths()).requireRosetta()
             for line in try await steamStore().status().lines() { print(line) }
+        }
+    }
+}
+
+struct Play: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Play a game from your Steam library (starts Steam first if needed).")
+    @Argument(help: "The game: its Cellar id (outer-wilds), Steam appid or name.") var game: String
+
+    func run() async throws {
+        try Doctor(paths: CellarPaths()).requireRosetta()
+        guard let profile = GameProfiles.find(game, in: try GameProfiles.bundled()) else { throw GameError.unknownGame(game) }
+        let paths = CellarPaths()
+        let games = GameStore(paths: paths, steam: steamStore())
+        print("Starting \(profile.name) (\(profile.renderer.displayName))…")
+        switch try await games.play(profile) {
+        case .launched: break
+        case .broughtForward: print("\(profile.name) is already running; bringing it forward.")
         }
     }
 }

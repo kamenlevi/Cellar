@@ -84,3 +84,23 @@ extension RendererError: LocalizedError {
     public var errorDescription: String? { "This game needs Apple's D3DMetal, which isn't imported yet." }
     public var recoverySuggestion: String? { "Run: cellar d3dmetal import ~/Downloads/<Evaluation environment for Windows games>.dmg" }
 }
+
+extension GameError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unknownGame(let q): "Cellar doesn't know a game called \"\(q)\" yet."
+        case .notInstalled(let name): "\(name) isn't installed in Cellar's Steam."
+        case .stillDownloading(let name): "\(name) is still downloading."
+        case .steamNotSignedIn: "Steam didn't sign in within 90 seconds."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .unknownGame: "Known games: \(((try? GameProfiles.bundled()) ?? []).map(\.id).joined(separator: ", "))"
+        case .notInstalled: "Install it in the Steam window first (open it with: cellar steam)."
+        case .stillDownloading: "Wait until Steam shows it as ready, then try again."
+        case .steamNotSignedIn: "Sign in in the Steam window (cellar steam), then try again."
+        }
+    }
+}
