@@ -66,6 +66,7 @@ extension SteamError: LocalizedError {
         case .notInstalled: "Steam isn't installed in Cellar yet."
         case .badInstaller(let reason): "The Steam installer download wasn't valid (\(reason)), so nothing was run."
         case .installFailed(let reason): "Steam's installer finished but Steam.exe isn't there (\(reason))."
+        case .noWindow: "Steam started but its window never appeared, even after one automatic restart."
         }
     }
 
@@ -74,6 +75,7 @@ extension SteamError: LocalizedError {
         case .notInstalled: "Run: cellar steam install"
         case .badInstaller: "Try again: cellar steam install"
         case .installFailed: "See the log: ~/Library/Logs/Cellar/Steam.log"
+        case .noWindow: "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log"
         }
     }
 }

@@ -10,6 +10,8 @@ private struct SteamRig {
     let serverCalls: URL
     let tasklist: URL
     let hang: URL
+    let noWindow: URL
+    let noWindowOnce: URL
     let bottles: BottleStore
     let engines: EngineStore
 
@@ -19,6 +21,8 @@ private struct SteamRig {
         serverCalls = tmp.url.appending(path: "server-calls.txt")
         tasklist = tmp.url.appending(path: "tasklist.csv")
         hang = tmp.url.appending(path: "hang")
+        noWindow = tmp.url.appending(path: "no-window")
+        noWindowOnce = tmp.url.appending(path: "no-window-once")
         let install = installerInstalls
             ? #"mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe""#
             : "true"
@@ -31,6 +35,12 @@ private struct SteamRig {
           tasklist) [ -f '\(hang.path)' ] && sleep 30; cat '\(tasklist.path)' 2>/dev/null ;;
         esac
         [ "$2" = "-shutdown" ] && rm -f '\(tasklist.path)'
+        case "$*" in *-no-cef-sandbox*)
+          rm -f '\(hang.path)'
+          if [ -f '\(noWindow.path)' ]; then printf '"steam.exe","32"\r\n' > '\(tasklist.path)'
+          elif [ -f '\(noWindowOnce.path)' ]; then rm -f '\(noWindowOnce.path)'; printf '"steam.exe","32"\r\n' > '\(tasklist.path)'
+          else printf '"steam.exe","32"\r\n"steamwebhelper.exe","40"\r\n' > '\(tasklist.path)'; fi ;;
+        esac
         exit 0
         """
         let wineserver = "#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> '\(serverCalls.path)'\n"
@@ -42,7 +52,8 @@ private struct SteamRig {
     func store(installer: URL? = nil, macSteam: Bool = false) throws -> SteamStore {
         let source = try installer ?? fakeInstaller()
         return SteamStore(paths: tmp.paths, bottles: bottles, engines: engines,
-                          installer: source, engineId: "fake", macSteam: { macSteam }, commandTimeout: .seconds(2))
+                          installer: source, engineId: "fake", macSteam: { macSteam }, commandTimeout: .seconds(2),
+                          windowWait: .seconds(3), pollInterval: .milliseconds(200))
     }
 
     func fakeInstaller(_ body: Data? = nil) throws -> URL {
@@ -251,4 +262,40 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     let steam = try await rig.installedStore()
     try rig.setTasklist(["plugplay.exe", "explorer.exe", "steam.exe", "steamwebhelper.exe"])
     #expect(try await steam.processes() == ["plugplay.exe", "explorer.exe", "steam.exe", "steamwebhelper.exe"])
+}
+
+// MARK: - Step 5 of Kamen's checklist: Steam up, but its window process gone
+
+private func spawns(_ rig: SteamRig) -> Int { rig.lines(rig.calls).filter { $0.contains("-no-cef-sandbox") }.count }
+
+@Test func steamThatComesUpWithoutItsWindowIsRestartedOnce() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try Data().write(to: rig.noWindowOnce)
+    #expect(try await steam.start() == .restartedAfterNoWindow)
+    #expect(spawns(rig) == 2)
+    #expect(try await steam.processes().contains("steamwebhelper.exe"))
+}
+
+@Test func steamThatNeverShowsItsWindowEndsInAClearError() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try Data().write(to: rig.noWindow)
+    await #expect(throws: SteamError.noWindow) { try await steam.start() }
+    #expect(spawns(rig) == 2)
+}
+
+@Test func runningSteamWithoutItsWindowIsNotJustBroughtForward() async throws {
+    // Kamen's state after the forced stop: steam.exe alive, steamwebhelper.exe dead, Dock click does nothing.
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["steam.exe", "steamerrorreporter64.exe"])
+    #expect(try await steam.start() == .clearedStaleStateThenStarted)
+    #expect(rig.lines(rig.serverCalls).first == "-k")
+    #expect(spawns(rig) == 1)
+}
+
+@Test func noWindowErrorSaysWhatToDo() {
+    #expect(SteamError.noWindow.errorDescription == "Steam started but its window never appeared, even after one automatic restart.")
+    #expect(SteamError.noWindow.recoverySuggestion == "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log")
 }

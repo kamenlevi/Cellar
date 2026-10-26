@@ -4,6 +4,8 @@ public enum SteamError: Error, Equatable {
     case notInstalled
     case badInstaller(String)
     case installFailed(String)
+    /// Steam ran but its window process (steamwebhelper.exe) never came up, even after one restart.
+    case noWindow
 }
 
 public struct SteamStatus: Equatable, Sendable {
@@ -48,6 +50,8 @@ public enum StartOutcome: Equatable, Sendable {
     case started
     case broughtForward
     case clearedStaleStateThenStarted
+    /// Steam came up without its window process, so Cellar restarted it once.
+    case restartedAfterNoWindow
 }
 
 /// Windows Steam in Cellar's one shared bottle, "Steam". Kamen signs in himself; Cellar never touches credentials.
@@ -70,11 +74,15 @@ public struct SteamStore: Sendable {
     let macSteam: @Sendable () -> Bool
     /// How long `tasklist` and `-shutdown` may take before the session counts as stuck.
     let commandTimeout: Duration
+    /// How long a fresh Steam may take to bring up its window process before Cellar restarts it once.
+    let windowWait: Duration
+    let pollInterval: Duration
 
     public init(paths: CellarPaths, bottles: BottleStore, engines: EngineStore,
                 installer: URL = SteamStore.installerURL, engineId: String? = nil,
                 macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning,
-                commandTimeout: Duration = .seconds(15)) {
+                commandTimeout: Duration = .seconds(15),
+                windowWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
         self.paths = paths
         self.bottles = bottles
         self.engines = engines
@@ -82,6 +90,8 @@ public struct SteamStore: Sendable {
         self.engineId = engineId
         self.macSteam = macSteam
         self.commandTimeout = commandTimeout
+        self.windowWait = windowWait
+        self.pollInterval = pollInterval
     }
 
     var name: BottleName { try! BottleName(Self.bottleName) }
@@ -176,23 +186,45 @@ public struct SteamStore: Sendable {
         var outcome: StartOutcome
         do {
             let running = try await processes()
-            if running.contains("steam.exe") {
+            if running.contains("steam.exe") && running.contains("steamwebhelper.exe") {
                 // Steam hands this to the instance that's already running, which shows its window.
-                outcome = .broughtForward
-            } else {
-                outcome = running.contains(where: { !Self.wineSystemProcesses.contains($0) })
-                    ? .clearedStaleStateThenStarted : .started
-                // Always end the session first: the check above ran headless (no display driver), and a
-                // Steam started inside that session would get no window.
-                try await bottles.kill(name)
+                try launch()
+                return .broughtForward
             }
+            // steam.exe without its window process is stuck too: clicking its Dock icon does nothing.
+            outcome = running.contains(where: { !Self.wineSystemProcesses.contains($0) })
+                ? .clearedStaleStateThenStarted : .started
+            // Always end the session first: the check above ran headless (no display driver), and a
+            // Steam started inside that session would get no window.
+            try await bottles.kill(name)
         } catch WineRunnerError.timedOut {
             // The session doesn't answer: it's stuck.
             try await bottles.kill(name)
             outcome = .clearedStaleStateThenStarted
         }
+        try launch()
+        if try await windowAppears() { return outcome }
+
+        // Seen after a forced stop: Steam's first start loses its window process once; a second start works.
+        try await bottles.kill(name)
+        try launch()
+        if try await windowAppears() { return .restartedAfterNoWindow }
+        throw SteamError.noWindow
+    }
+
+    private func launch() throws {
         try bottles.runner(for: name, mode: .interactive).spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder)
-        return outcome
+    }
+
+    /// Waits for steamwebhelper.exe, Steam's window process. A session that doesn't answer counts as "not yet".
+    private func windowAppears() async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + windowWait
+        while clock.now < deadline {
+            try await Task.sleep(for: pollInterval)
+            if let running = try? await processes(), running.contains("steamwebhelper.exe") { return true }
+        }
+        return false
     }
 
     public func stop() async throws {

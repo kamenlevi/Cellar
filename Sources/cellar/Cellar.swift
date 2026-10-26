@@ -205,6 +205,7 @@ struct SteamCommand: AsyncParsableCommand {
         case .started: print("Starting Steam. Sign in with your own account in the Steam window.")
         case .broughtForward: print("Steam is already running; bringing its window forward.")
         case .clearedStaleStateThenStarted: print("Cleared a stuck Steam session, then started Steam.")
+        case .restartedAfterNoWindow: print("Steam came up without its window, so Cellar restarted it once. Its window should be up now.")
         }
     }
 
