@@ -62,7 +62,7 @@ gamelog="$out/spike-$variant-wine.log"
 log stream --style compact --predicate 'eventMessage CONTAINS "metal-HUD"' > "$hud" 2>&1 &
 logpid=$!
 
-echo "Starting $title with $variant…"
+echo "Starting ${title} with ${variant}…"
 (cd "$game" && nohup wine "$game/$exe_name" > "$gamelog" 2>&1 &)
 
 sleep 45
