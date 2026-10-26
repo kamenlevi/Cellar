@@ -50,6 +50,7 @@ enum FakeEngine {
     }
 
     /// An installed engine built straight on disk, for tests that only need its paths.
+    @discardableResult
     static func installed(id: String = "fake", in dir: URL, wine: String = defaultWine,
                           wineserver: String = defaultWineserver) throws -> InstalledEngine {
         let root = try makeFolder(id: id, in: dir, wine: wine, wineserver: wineserver)
