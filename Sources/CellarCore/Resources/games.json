@@ -1,0 +1,19 @@
+[
+  {
+    "id": "outer-wilds",
+    "name": "Outer Wilds",
+    "appid": 753640,
+    "exe": "OuterWilds.exe",
+    "renderer": "d3dmetal",
+    "saves": "AppData/LocalLow/Mobius Digital/Outer Wilds",
+    "launch": "direct"
+  },
+  {
+    "id": "animal-well",
+    "name": "ANIMAL WELL",
+    "appid": 813230,
+    "exe": "Animal Well.exe",
+    "renderer": "d3dmetal",
+    "launch": "direct"
+  }
+]
