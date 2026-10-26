@@ -1,14 +1,17 @@
 #!/bin/bash
-# M2 spike (throwaway, kept as a record): start Outer Wilds directly in the shared Steam bottle with one
+# M2 spike (throwaway, kept as a record): start a game (Rain World by default) directly in the shared Steam bottle with one
 # renderer, capture the Metal HUD log for 60 s, and note which renderer libraries loaded and whether audio plays.
 #
-#   scripts/m2-spike.sh d3dmetal|dxvk|wined3d
+#   scripts/m2-spike.sh d3dmetal|dxvk|wined3d [rain-world|outer-wilds]   (default: rain-world)
 #
 # Run by Kamen only (it opens the game). Steam must be running first: cellar steam
 set -euo pipefail
-variant="${1:?usage: m2-spike.sh d3dmetal|dxvk|wined3d}"
-appid=753640
-exe_name="OuterWilds.exe"
+variant="${1:?usage: m2-spike.sh d3dmetal|dxvk|wined3d [rain-world|outer-wilds]}"
+case "${2:-rain-world}" in
+  rain-world)  appid=312520; exe_name="RainWorld.exe"; title="Rain World" ;;
+  outer-wilds) appid=753640; exe_name="OuterWilds.exe"; title="Outer Wilds" ;;
+  *) echo "unknown game ${2}"; exit 1 ;;
+esac
 
 root="$HOME/Library/Application Support/Cellar"
 engine="$root/engines/sikarugir-10.0_6-c1"
@@ -19,8 +22,8 @@ out="$(cd "$(dirname "$0")/.." && pwd)/.superpowers"
 mkdir -p "$out"
 
 manifest="$steamapps/appmanifest_$appid.acf"
-[ -f "$manifest" ] || { echo "Outer Wilds isn't installed in Cellar's Steam yet."; exit 1; }
-grep -q '"StateFlags"[[:space:]]*"4"' "$manifest" || { echo "Outer Wilds is still downloading."; exit 1; }
+[ -f "$manifest" ] || { echo "$title isn't installed in Cellar's Steam yet."; exit 1; }
+grep -q '"StateFlags"[[:space:]]*"4"' "$manifest" || { echo "$title is still downloading."; exit 1; }
 installdir=$(sed -n 's/.*"installdir"[[:space:]]*"\(.*\)".*/\1/p' "$manifest")
 game="$steamapps/common/$installdir"
 "$HOME/Cellar/.build/release/cellar" steam status | grep -q "Running: yes" || { echo "Start Steam first: cellar steam"; exit 1; }
@@ -59,7 +62,7 @@ gamelog="$out/spike-$variant-wine.log"
 log stream --style compact --predicate 'eventMessage CONTAINS "metal-HUD"' > "$hud" 2>&1 &
 logpid=$!
 
-echo "Starting Outer Wilds with $variant…"
+echo "Starting $title with $variant…"
 (cd "$game" && nohup wine "$game/$exe_name" > "$gamelog" 2>&1 &)
 
 sleep 45

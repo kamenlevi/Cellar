@@ -9,6 +9,14 @@
     "launch": "direct"
   },
   {
+    "id": "rain-world",
+    "name": "Rain World",
+    "appid": 312520,
+    "exe": "RainWorld.exe",
+    "renderer": "d3dmetal",
+    "launch": "direct"
+  },
+  {
     "id": "animal-well",
     "name": "ANIMAL WELL",
     "appid": 813230,
