@@ -76,3 +76,11 @@ private func report(frames: FrameStats? = FrameStats(frames: 14_400, seconds: 12
     #expect(check.automaticVerdict == "PASS (automatic part)")
     #expect(check.markdown().contains("target 57"))
 }
+
+@Test func mutedCheckDoesNotJudgeSound() {
+    var check = report(audio: nil)
+    #expect(check.automaticVerdict.hasPrefix("FAIL: no sound"))
+    check.muted = true
+    #expect(check.automaticVerdict == "PASS (automatic part)")
+    #expect(check.markdown().contains("muted"))
+}

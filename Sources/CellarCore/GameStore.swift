@@ -26,7 +26,8 @@ public struct GameStore: Sendable {
         self.pollInterval = pollInterval
     }
 
-    public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:]) async throws -> PlayOutcome {
+    /// `muted` starts the game with no sound driver at all, so nothing it plays reaches the Mac's speakers.
+    public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:], muted: Bool = false) async throws -> PlayOutcome {
         let folder: URL
         switch SteamLibrary.state(appid: profile.appid, steamFolder: steam.steamFolder) {
         case .notInstalled: throw GameError.notInstalled(profile.name)
@@ -45,6 +46,7 @@ public struct GameStore: Sendable {
         env["SteamGameId"] = String(profile.appid)
         env["ROSETTA_ADVERTISE_AVX"] = "1"
         env.merge(extraEnvironment) { $1 }
+        if muted { env["WINEDLLOVERRIDES", default: ""] += ";winecoreaudio.drv=d" }
 
         let running = (try? await steam.processes()) ?? []
         if running.contains(exe.lastPathComponent.lowercased()) {

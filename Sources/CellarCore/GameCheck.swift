@@ -18,6 +18,8 @@ public struct CheckReport: Sendable {
     public var wineErrors: [String]
     /// Nil when the profile names no save folder.
     public var savesChanged: Bool?
+    /// The game ran with no sound driver, so sound isn't judged.
+    public var muted = false
 
     /// What the game must hold: 95% of the display's refresh rate (or of the game's own rate when that is lower), and at
     /// most one hitch per minute.
@@ -30,7 +32,7 @@ public struct CheckReport: Sendable {
         if stillRunning != true { out.append("the game quit or crashed during the check") }
         if rendererLoaded != true { out.append("\(renderer.displayName) isn't loaded in the game") }
         if windowFillsScreen != true { out.append("the window doesn't fill the screen") }
-        if audio != true { out.append("no sound started playing") }
+        if audio != true && !muted { out.append("no sound started playing") }
         if let frames {
             if frames.averageFPS < targetFPS { out.append("\(Int(frames.averageFPS.rounded())) fps, under \(Int(targetFPS.rounded()))") }
             if frames.hitches > allowedHitches { out.append("\(frames.hitches) hitches, more than \(allowedHitches)") }
@@ -57,7 +59,7 @@ public struct CheckReport: Sendable {
             "- Launches and keeps running: \(mark(stillRunning))\(launched ? "" : " (it was already running)")",
             "- Renderer loaded: \(mark(rendererLoaded))",
             "- Window fills the screen: \(mark(windowFillsScreen))",
-            "- Sound playing: \(mark(audio))",
+            "- Sound playing: " + (muted ? "not judged (muted for this check)" : mark(audio)),
         ]
         if let frames {
             lines.append("- Frame rate: \(String(format: "%.1f", frames.averageFPS)) fps average over \(Int(frames.seconds)) s "
@@ -148,7 +150,7 @@ public struct GameCheck: Sendable {
 
     public var reportFolder: URL { paths.logs.appending(path: "checks", directoryHint: .isDirectory) }
 
-    public func run(_ profile: GameProfile, seconds: Int) async throws -> CheckReport {
+    public func run(_ profile: GameProfile, seconds: Int, muted: Bool = false) async throws -> CheckReport {
         let startedAt = Date()
         let runner = try steam.bottles.runner(for: steam.name, mode: .interactive)
         let logStart = (try? FileManager.default.attributesOfItem(atPath: runner.logFile.path)[.size] as? NSNumber)?.uint64Value ?? 0
@@ -164,7 +166,7 @@ public struct GameCheck: Sendable {
         do {
             outcome = try await games.play(profile, extraEnvironment: [
                 "MTL_HUD_ENABLED": "1", "MTL_HUD_LOG_ENABLED": "1", "WINEDEBUG": "fixme-all,err+all",
-            ])
+            ], muted: muted)
         } catch {
             stopHUD()
             throw error
@@ -192,7 +194,8 @@ public struct GameCheck: Sendable {
             rendererLoaded: early.libraries.union(late.libraries).contains(Self.marker(profile.renderer)),
             stillRunning: late.pid != nil,
             wineErrors: Self.wineErrors(log: log),
-            savesChanged: savesAfter.flatMap { after in savesBefore.map { after > $0 } })
+            savesChanged: savesAfter.flatMap { after in savesBefore.map { after > $0 } },
+            muted: muted)
     }
 
     private struct Sample {

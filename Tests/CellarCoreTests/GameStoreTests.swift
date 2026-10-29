@@ -21,7 +21,7 @@ struct GameRig {
         let steamDir = #""$WINEPREFIX/drive_c/Program Files (x86)/Steam""#
         let wine = """
         #!/bin/sh
-        printf "%s | cwd=%s | appid=%s | prepend=%s\\n" "$*" "$(pwd)" "$SteamAppId" "$WINEDLLPATH_PREPEND" >> '\(calls.path)'
+        printf "%s | cwd=%s | appid=%s | prepend=%s | overrides=%s\\n" "$*" "$(pwd)" "$SteamAppId" "$WINEDLLPATH_PREPEND" "$WINEDLLOVERRIDES" >> '\(calls.path)'
         mkdir -p "$WINEPREFIX" && touch "$WINEPREFIX/user.reg"
         case "$1" in
           *SteamSetup.exe) mkdir -p \(steamDir) && touch \(steamDir)/steam.exe ;;
@@ -135,4 +135,19 @@ private let outerWilds = GameProfile(id: "outer-wilds", name: "Outer Wilds", app
 @Test func d3dmetalGameWithoutImportSaysHowToImport() async throws {
     let rig = try await GameRig(d3dmetal: false)
     await #expect(throws: RendererError.d3dmetalNotImported) { try await rig.games.play(outerWilds) }
+}
+
+@Test func mutedPlayHasNoSoundDriverButKeepsTheRenderer() async throws {
+    let rig = try await GameRig()
+    _ = try await rig.games.play(outerWilds, muted: true)
+    let line = try #require(await rig.waitFor("OuterWilds.exe"))
+    #expect(line.contains("winecoreaudio.drv=d"))
+    #expect(line.contains("d3d11,d3d12,d3d10core,dxgi=b"))
+}
+
+@Test func unmutedPlayKeepsTheSoundDriver() async throws {
+    let rig = try await GameRig()
+    _ = try await rig.games.play(outerWilds)
+    let line = try #require(await rig.waitFor("OuterWilds.exe"))
+    #expect(!line.contains("winecoreaudio"))
 }

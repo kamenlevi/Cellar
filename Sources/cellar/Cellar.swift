@@ -264,6 +264,7 @@ struct SteamCommand: AsyncParsableCommand {
 struct Play: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Play a game from your Steam library (starts Steam first if needed).")
     @Argument(help: "The game: its Cellar id (outer-wilds), Steam appid or name.") var game: String
+    @Flag(help: "Start it with no sound at all.") var mute = false
 
     func run() async throws {
         try Doctor(paths: CellarPaths()).requireRosetta()
@@ -271,7 +272,7 @@ struct Play: AsyncParsableCommand {
         let paths = CellarPaths()
         let games = GameStore(paths: paths, steam: steamStore())
         print("Starting \(profile.name) (\(profile.renderer.displayName))…")
-        switch try await games.play(profile) {
+        switch try await games.play(profile, muted: mute) {
         case .launched: break
         case .broughtForward: print("\(profile.name) is already running; bringing it forward.")
         }
@@ -284,6 +285,7 @@ struct Check: AsyncParsableCommand {
         discussion: "Play normally while it runs. The game keeps running afterwards.")
     @Argument(help: "The game: its Cellar id (rain-world), Steam appid or name.") var game: String
     @Option(help: "How long to measure.") var seconds = 120
+    @Flag(help: "Start it with no sound at all (sound isn't judged then).") var mute = false
 
     func run() async throws {
         try Doctor(paths: CellarPaths()).requireRosetta()
@@ -293,7 +295,7 @@ struct Check: AsyncParsableCommand {
         let steam = steamStore()
         let check = GameCheck(paths: paths, games: GameStore(paths: paths, steam: steam), steam: steam)
         print("Starting \(profile.name) (\(profile.renderer.displayName)) and measuring for \(seconds) s. Play normally…")
-        let report = try await check.run(profile, seconds: seconds)
+        let report = try await check.run(profile, seconds: seconds, muted: mute)
         print("Report: \(try report.write(to: check.reportFolder).path)")
         print(report.automaticVerdict)
     }
