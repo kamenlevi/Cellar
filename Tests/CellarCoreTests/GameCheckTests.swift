@@ -68,3 +68,11 @@ private func report(frames: FrameStats? = FrameStats(frames: 14_400, seconds: 12
     let saved = try result.write(to: rig.tmp.url.appending(path: "checks"))
     #expect(try String(contentsOf: saved, encoding: .utf8).contains("PASS (automatic part)"))
 }
+
+@Test func aGameThatNeedsLessThanTheDisplayIsHeldToItsOwnRate() {
+    var check = report(frames: FrameStats(frames: 11_640, seconds: 120, averageFPS: 97, slowestFPS: 9, hitches: 1))
+    #expect(check.automaticVerdict.hasPrefix("FAIL: 97 fps, under 114"))
+    check.game.fps = 60
+    #expect(check.automaticVerdict == "PASS (automatic part)")
+    #expect(check.markdown().contains("target 57"))
+}

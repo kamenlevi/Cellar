@@ -15,7 +15,8 @@
     "exe": "RainWorld.exe",
     "renderer": "d3dmetal",
     "saves": "AppData/LocalLow/Videocult/Rain World",
-    "launch": "direct"
+    "launch": "direct",
+    "fps": 60
   },
   {
     "id": "animal-well",

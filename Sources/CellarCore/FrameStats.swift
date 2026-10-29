@@ -12,7 +12,7 @@ public struct HUDSample: Equatable, Sendable {
 }
 
 /// Frame rate from the Metal HUD log. The HUD's per-frame times are `<private>` in the system log, so everything here
-/// comes from frame-count deltas between samples (docs/m2-spike.md): a hitch is a sample at under half the median rate.
+/// comes from frame-count deltas between samples (docs/m2-spike.md).
 public struct FrameStats: Equatable, Sendable {
     public var frames: Int
     public var seconds: Double
@@ -46,7 +46,8 @@ public struct FrameStats: Equatable, Sendable {
     }
 
     /// Nil when there are fewer than 30 frames to go on, after dropping the first `warmup` seconds (loading screens).
-    public static func summarize(_ samples: [HUDSample], skippingFirst warmup: TimeInterval = 0) -> FrameStats? {
+    /// A hitch is a sample under half the median rate, or under half `target` when the game needs less than that.
+    public static func summarize(_ samples: [HUDSample], skippingFirst warmup: TimeInterval = 0, target: Double? = nil) -> FrameStats? {
         guard let first = samples.first else { return nil }
         let kept = samples.filter { $0.time.timeIntervalSince(first.time) >= warmup }
         var frames = 0
@@ -61,8 +62,8 @@ public struct FrameStats: Equatable, Sendable {
             rates.append(Double(df) / dt)
         }
         guard frames >= 30, !rates.isEmpty else { return nil }
-        let median = rates.sorted()[rates.count / 2]
+        let steady = min(rates.sorted()[rates.count / 2], target ?? .infinity)
         return FrameStats(frames: frames, seconds: seconds, averageFPS: Double(frames) / seconds,
-                          slowestFPS: rates.min()!, hitches: rates.filter { $0 < median / 2 }.count)
+                          slowestFPS: rates.min()!, hitches: rates.filter { $0 < steady / 2 }.count)
     }
 }

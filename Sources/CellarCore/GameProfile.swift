@@ -18,10 +18,14 @@ public struct GameProfile: Codable, Equatable, Sendable {
     /// Save folder under the Windows user profile, e.g. "AppData/LocalLow/Mobius Digital/Outer Wilds".
     public var saves: String?
     public var launch: LaunchMode
+    /// The frame rate the game itself needs, when that is below the display's (Rain World updates 40 times a second).
+    /// Nil: the display's refresh rate.
+    public var fps: Int?
 
-    public init(id: String, name: String, appid: Int, exe: String, renderer: Renderer, saves: String? = nil, launch: LaunchMode = .direct) {
+    public init(id: String, name: String, appid: Int, exe: String, renderer: Renderer, saves: String? = nil,
+                launch: LaunchMode = .direct, fps: Int? = nil) {
         self.id = id; self.name = name; self.appid = appid; self.exe = exe
-        self.renderer = renderer; self.saves = saves; self.launch = launch
+        self.renderer = renderer; self.saves = saves; self.launch = launch; self.fps = fps
     }
 
     public init(from decoder: Decoder) throws {
@@ -33,6 +37,7 @@ public struct GameProfile: Codable, Equatable, Sendable {
         renderer = try c.decode(Renderer.self, forKey: .renderer)
         saves = try c.decodeIfPresent(String.self, forKey: .saves)
         launch = try c.decodeIfPresent(LaunchMode.self, forKey: .launch) ?? .direct
+        fps = try c.decodeIfPresent(Int.self, forKey: .fps)
     }
 }
 

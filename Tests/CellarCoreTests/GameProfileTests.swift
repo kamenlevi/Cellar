@@ -27,3 +27,9 @@ func findByIdAppidOrName(_ query: String) throws {
     #expect(profiles.first?.launch == .direct)
     #expect(profiles.first?.saves == nil)
 }
+
+@Test func rainWorldNeeds60fpsAndOthersTheDisplay() throws {
+    let profiles = try GameProfiles.bundled()
+    #expect(GameProfiles.find("rain-world", in: profiles)?.fps == 60)
+    #expect(GameProfiles.find("outer-wilds", in: profiles)?.fps == nil)
+}

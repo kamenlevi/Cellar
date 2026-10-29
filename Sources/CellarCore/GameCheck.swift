@@ -19,8 +19,9 @@ public struct CheckReport: Sendable {
     /// Nil when the profile names no save folder.
     public var savesChanged: Bool?
 
-    /// What the game must hold: 95% of the display's refresh rate, and at most one hitch per minute.
-    var targetFPS: Double { refreshRate * 0.95 }
+    /// What the game must hold: 95% of the display's refresh rate (or of the game's own rate when that is lower), and at
+    /// most one hitch per minute.
+    var targetFPS: Double { min(refreshRate, game.fps.map(Double.init) ?? refreshRate) * 0.95 }
     var allowedHitches: Int { max(1, seconds / 60) }
 
     /// Failures in the checklist's order; empty when the automatic part passes.
@@ -185,7 +186,7 @@ public struct GameCheck: Sendable {
         return CheckReport(
             game: profile, renderer: profile.renderer, seconds: seconds, startedAt: startedAt, launched: launched,
             refreshRate: probe.screen().refreshRate,
-            frames: FrameStats.summarize(samples, skippingFirst: launched ? warmup : 0),
+            frames: FrameStats.summarize(samples, skippingFirst: launched ? warmup : 0, target: profile.fps.map(Double.init)),
             windowFillsScreen: late.pid != nil ? late.fillsScreen : early.fillsScreen,
             audio: early.audio || late.audio,
             rendererLoaded: early.libraries.union(late.libraries).contains(Self.marker(profile.renderer)),

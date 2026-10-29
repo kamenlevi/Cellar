@@ -67,3 +67,11 @@ private func samples(_ framesPerSample: [Int], every step: Double = 0.4) -> [HUD
     let stats = try #require(FrameStats.summarize(parsed))
     #expect(stats.frames == 40 * 48)
 }
+
+@Test func hitchesCountAgainstWhatTheGameNeeds() throws {
+    var frames = Array(repeating: 48, count: 50)  // 120 fps
+    frames[25] = 16                               // one moment at 40 fps
+    #expect(FrameStats.summarize(samples(frames))?.hitches == 1)
+    // A game that needs 60 fps only stutters visibly under 30.
+    #expect(FrameStats.summarize(samples(frames), target: 60)?.hitches == 0)
+}
