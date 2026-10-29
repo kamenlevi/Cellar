@@ -22,16 +22,22 @@ public enum MacFacts {
     }
 
     /// Over `pmset -g assertions`: coreaudiod holds an assertion per output device while sound plays on it, named
-    /// "com.apple.audio.<device>:output.context…", and it names the device, never the program (docs/m2-spike.md). So
-    /// sound counts as the game's when such an assertion is no older than `startedWithin` seconds.
-    public static func audioPlaying(assertions: String, startedWithin: TimeInterval) -> Bool {
-        assertions.split(whereSeparator: \.isNewline).contains { line in
-            guard line.contains("(coreaudiod)"), line.contains(":output.context"),
-                  let close = line.range(of: "] ") else { return false }
+    /// "com.apple.audio.<device>:output.context…". Newer macOS adds a "Created for PID: <pid>" line under it, which
+    /// decides. Without that line the assertion counts as the game's when it is no older than `startedWithin`
+    /// seconds (docs/m2-spike.md).
+    public static func audioPlaying(assertions: String, pid: Int32, startedWithin: TimeInterval) -> Bool {
+        let lines = assertions.split(whereSeparator: \.isNewline)
+        for (i, line) in lines.enumerated() {
+            guard line.contains("(coreaudiod)"), line.contains(":output.context"), let close = line.range(of: "] ") else { continue }
+            let details = lines[(i + 1)...].prefix { $0.first == "\t" }
+            if let owner = details.first(where: { $0.contains("Created for PID:") }) {
+                if Int32(owner.split(separator: ":").last!.trimmingCharacters(in: .whitespaces.union(["."]))) == pid { return true }
+                continue
+            }
             let age = line[close.upperBound...].prefix { $0 != " " }.split(separator: ":").compactMap { Double($0) }
-            guard age.count == 3 else { return false }
-            return age[0] * 3600 + age[1] * 60 + age[2] <= startedWithin
+            if age.count == 3, age[0] * 3600 + age[1] * 60 + age[2] <= startedWithin { return true }
         }
+        return false
     }
 
     /// Basenames of the files in `lsof -Fn -p <pid>` output (its "n/…" lines).

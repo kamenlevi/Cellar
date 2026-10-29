@@ -211,7 +211,8 @@ public struct GameCheck: Sendable {
         let screen = probe.screen().size
         let fills = probe.windows(pid).contains { $0.width >= screen.width * 0.98 && $0.height >= screen.height * 0.98 }
         return Sample(pid: pid, fillsScreen: fills,
-                      audio: MacFacts.audioPlaying(assertions: probe.assertions(), startedWithin: Date().timeIntervalSince(start) + 2),
+                      audio: MacFacts.audioPlaying(assertions: probe.assertions(), pid: pid,
+                                                   startedWithin: Date().timeIntervalSince(start) + 2),
                       libraries: MacFacts.loadedLibraries(lsof: probe.lsof(pid)))
     }
 

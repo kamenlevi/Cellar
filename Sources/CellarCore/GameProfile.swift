@@ -1,9 +1,9 @@
 import Foundation
 
 public enum LaunchMode: String, Codable, Sendable {
-    /// Start the game's exe directly beside the running Steam (each game gets its own renderer).
+    /// Start the game's exe directly beside the running Steam. No Steam Cloud sync.
     case direct
-    /// Ask Steam to start it (steam.exe -applaunch), for games that refuse a direct start.
+    /// Ask Steam to start it (steam.exe -applaunch), so Steam Cloud syncs its saves. The default.
     case throughSteam
 }
 
@@ -23,7 +23,7 @@ public struct GameProfile: Codable, Equatable, Sendable {
     public var fps: Int?
 
     public init(id: String, name: String, appid: Int, exe: String, renderer: Renderer, saves: String? = nil,
-                launch: LaunchMode = .direct, fps: Int? = nil) {
+                launch: LaunchMode = .throughSteam, fps: Int? = nil) {
         self.id = id; self.name = name; self.appid = appid; self.exe = exe
         self.renderer = renderer; self.saves = saves; self.launch = launch; self.fps = fps
     }
@@ -36,7 +36,7 @@ public struct GameProfile: Codable, Equatable, Sendable {
         exe = try c.decode(String.self, forKey: .exe)
         renderer = try c.decode(Renderer.self, forKey: .renderer)
         saves = try c.decodeIfPresent(String.self, forKey: .saves)
-        launch = try c.decodeIfPresent(LaunchMode.self, forKey: .launch) ?? .direct
+        launch = try c.decodeIfPresent(LaunchMode.self, forKey: .launch) ?? .throughSteam
         fps = try c.decodeIfPresent(Int.self, forKey: .fps)
     }
 }

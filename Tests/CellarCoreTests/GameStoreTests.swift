@@ -117,14 +117,6 @@ private let outerWilds = GameProfile(id: "outer-wilds", name: "Outer Wilds", app
     #expect(try await rig.games.play(outerWilds) == .broughtForward)
 }
 
-@Test func throughSteamProfileUsesApplaunch() async throws {
-    let rig = try await GameRig()
-    var profile = outerWilds
-    profile.launch = .throughSteam
-    _ = try await rig.games.play(profile)
-    #expect(await rig.waitFor("-applaunch 753640") != nil)
-}
-
 @Test func notInstalledGameIsRefusedWithoutStartingWine() async throws {
     let rig = try await GameRig()
     let other = GameProfile(id: "journey", name: "Journey", appid: 638230, exe: "Journey.exe", renderer: .d3dmetal)
@@ -137,6 +129,60 @@ private let outerWilds = GameProfile(id: "outer-wilds", name: "Outer Wilds", app
     await #expect(throws: RendererError.d3dmetalNotImported) { try await rig.games.play(outerWilds) }
 }
 
+private var throughSteam: GameProfile {
+    var profile = outerWilds
+    profile.launch = .throughSteam
+    return profile
+}
+
+@Test func steamStartedByCellarRunsWithD3DMetalForItsGames() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start()
+    let line = try #require(await rig.waitFor("steam.exe -no-cef-sandbox"))
+    #expect(line.contains("prepend=\(rig.tmp.paths.d3dmetal.path)/3.0/wine"))
+    #expect(line.contains("d3d11,d3d12,d3d10core,dxgi=b"))
+    #expect(rig.steam.gameRenderer == .d3dmetal)
+}
+
+@Test func steamWithoutD3DMetalRunsItsGamesOnWinesOwnRenderer() async throws {
+    let rig = try await GameRig(steamRunning: false, d3dmetal: false)
+    _ = try await rig.steam.start()
+    let line = try #require(await rig.waitFor("steam.exe -no-cef-sandbox"))
+    #expect(line.contains("prepend= |"))
+    #expect(rig.steam.gameRenderer == .wined3d)
+}
+
+@Test func stoppingSteamForgetsItsRenderer() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start()
+    try await rig.steam.stop()
+    #expect(rig.steam.gameRenderer == nil)
+}
+
+@Test func steamLaunchesTheGameSoItsCloudSaveSyncs() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    guard case .launched = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    let line = try #require(await rig.waitFor("-applaunch 753640"))
+    #expect(line.contains("prepend= |"))  // the game gets D3DMetal from Steam, not from this call
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(!rig.lines.contains { $0.hasPrefix(rig.steam.steamFolder.path + "/steamapps") || $0.contains("OuterWilds.exe |") })
+}
+
+@Test func steamStartedOutsideCellarMeansADirectStart() async throws {
+    let rig = try await GameRig()  // Steam already running, renderer unknown
+    _ = try await rig.games.play(throughSteam)
+    let line = try #require(await rig.waitFor("OuterWilds.exe"))
+    #expect(line.contains("prepend=\(rig.tmp.paths.d3dmetal.path)/3.0/wine"))
+    #expect(!rig.lines.contains { $0.contains("-applaunch") })
+}
+
+@Test func aCheckStartsTheGameItselfToGiveItTheHUD() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.games.play(throughSteam, extraEnvironment: ["MTL_HUD_ENABLED": "1"])
+    #expect(await rig.waitFor("OuterWilds.exe") != nil)
+    #expect(!rig.lines.contains { $0.contains("-applaunch") })
+}
+
 @Test func mutedPlayHasNoSoundDriverButKeepsTheRenderer() async throws {
     let rig = try await GameRig()
     _ = try await rig.games.play(outerWilds, muted: true)
@@ -145,9 +191,23 @@ private let outerWilds = GameProfile(id: "outer-wilds", name: "Outer Wilds", app
     #expect(line.contains("d3d11,d3d12,d3d10core,dxgi=b"))
 }
 
-@Test func unmutedPlayKeepsTheSoundDriver() async throws {
-    let rig = try await GameRig()
-    _ = try await rig.games.play(outerWilds)
-    let line = try #require(await rig.waitFor("OuterWilds.exe"))
-    #expect(!line.contains("winecoreaudio"))
+@Test func aMutedSteamLaunchesOnlyMutedGames() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start(muted: true)
+    let steamLine = try #require(await rig.waitFor("steam.exe -no-cef-sandbox"))
+    #expect(steamLine.contains("winecoreaudio.drv=d"))
+    #expect(rig.steam.gamesMuted)
+    // A muted play goes through the muted Steam; a play with sound must not, so it starts the game itself.
+    _ = try await rig.games.play(throughSteam, muted: true)
+    #expect(await rig.waitFor("-applaunch 753640") != nil)
+    _ = try await rig.games.play(throughSteam)
+    #expect(await rig.waitFor("OuterWilds.exe |") != nil)
+}
+
+@Test func steamWithSoundNeverLaunchesAMutedGame() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.games.play(throughSteam, muted: true)
+    let line = try #require(await rig.waitFor("OuterWilds.exe |"))
+    #expect(line.contains("winecoreaudio.drv=d"))
+    #expect(!rig.lines.contains { $0.contains("-applaunch") })
 }

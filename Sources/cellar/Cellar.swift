@@ -227,10 +227,11 @@ struct SteamCommand: AsyncParsableCommand {
 
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Start Steam, or bring its window forward if it's running.")
+        @Flag(help: "Start Steam with no sound driver, so no game it launches can make a sound.") var mute = false
         func run() async throws {
             try Doctor(paths: CellarPaths()).requireRosetta()
             SteamCommand.warnAboutMacSteam()
-            SteamCommand.say(try await steamStore().start())
+            SteamCommand.say(try await steamStore().start(muted: mute))
         }
     }
 

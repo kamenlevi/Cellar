@@ -21,10 +21,11 @@ func findByIdAppidOrName(_ query: String) throws {
     #expect(GameProfiles.find("nope", in: try GameProfiles.bundled()) == nil)
 }
 
-@Test func launchModeDefaultsToDirect() throws {
+@Test func gamesLaunchThroughSteamByDefault() throws {
     let json = #"[{"id":"x","name":"X","appid":1,"exe":"x.exe","renderer":"wined3d"}]"#
     let profiles = try JSONDecoder().decode([GameProfile].self, from: Data(json.utf8))
-    #expect(profiles.first?.launch == .direct)
+    #expect(profiles.first?.launch == .throughSteam)
+    #expect(try GameProfiles.bundled().allSatisfy { $0.launch == .throughSteam })
     #expect(profiles.first?.saves == nil)
 }
 

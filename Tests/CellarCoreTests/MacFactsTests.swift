@@ -17,12 +17,12 @@ Kernel Assertions: 0x104=USB,MAGICWAKE
 """
 
 @Test func audioAssertionOnlyIfStartedSinceTheGame() {
-    #expect(MacFacts.audioPlaying(assertions: pmsetWhilePlaying, startedWithin: 60))
+    #expect(MacFacts.audioPlaying(assertions: pmsetWhilePlaying, pid: 1, startedWithin: 60))
     // 43 s old: sound on that output started before a 30 s-old game did, so it isn't the game's.
-    #expect(!MacFacts.audioPlaying(assertions: pmsetWhilePlaying, startedWithin: 30))
+    #expect(!MacFacts.audioPlaying(assertions: pmsetWhilePlaying, pid: 1, startedWithin: 30))
     // The 5 s-old microphone assertion is input, not sound playing.
-    #expect(!MacFacts.audioPlaying(assertions: pmsetWhilePlaying, startedWithin: 10))
-    #expect(!MacFacts.audioPlaying(assertions: "", startedWithin: 60))
+    #expect(!MacFacts.audioPlaying(assertions: pmsetWhilePlaying, pid: 1, startedWithin: 10))
+    #expect(!MacFacts.audioPlaying(assertions: "", pid: 1, startedWithin: 60))
 }
 
 @Test func librariesAreBasenames() {
@@ -53,4 +53,18 @@ Kernel Assertions: 0x104=USB,MAGICWAKE
     #expect(MacFacts.pid(ofExe: "RainWorld.exe", ps: ps) == 81300)
     #expect(MacFacts.pid(ofExe: "Animal Well.exe", ps: ps) == 81400)
     #expect(MacFacts.pid(ofExe: "OuterWilds.exe", ps: ps) == nil)
+}
+
+@Test func soundBelongsToTheGameWhenMacOSNamesItsPid() {
+    let pmset = """
+    Listed by owning process:
+       pid 427(coreaudiod): [0x001770c2000189b7] 00:12:19 PreventUserIdleSystemSleep named: "com.apple.audio.80-C3-BA-52-BD-A5:output.context.preventuseridlesleep"  
+    \tCreated for PID: 8978.
+       pid 427(coreaudiod): [0x001770c2000189c0] 00:00:03 PreventUserIdleSystemSleep named: "com.apple.audio.80-C3-BA-52-BD-A5:output.context.preventuseridlesleep"  
+    \tCreated for PID: 512.
+    """
+    // Old enough to predate the check, but macOS says it's the game's: that wins over age.
+    #expect(MacFacts.audioPlaying(assertions: pmset, pid: 8978, startedWithin: 60))
+    // New enough, but it's another app's.
+    #expect(!MacFacts.audioPlaying(assertions: pmset, pid: 9000, startedWithin: 60))
 }

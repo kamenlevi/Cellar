@@ -26,7 +26,10 @@ public struct GameStore: Sendable {
         self.pollInterval = pollInterval
     }
 
-    /// `muted` starts the game with no sound driver at all, so nothing it plays reaches the Mac's speakers.
+    /// Steam launches the game when it can, so Steam Cloud syncs its saves before and after. That needs a Steam that
+    /// Cellar started with the game's renderer, and no extra variables (a check's HUD): otherwise the game starts
+    /// directly beside Steam, without cloud sync. `muted` starts the game with no sound driver at all, so it can't make
+    /// a sound on this Mac; through Steam only when Steam itself was started muted.
     public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:], muted: Bool = false) async throws -> PlayOutcome {
         let folder: URL
         switch SteamLibrary.state(appid: profile.appid, steamFolder: steam.steamFolder) {
@@ -46,7 +49,7 @@ public struct GameStore: Sendable {
         env["SteamGameId"] = String(profile.appid)
         env["ROSETTA_ADVERTISE_AVX"] = "1"
         env.merge(extraEnvironment) { $1 }
-        if muted { env["WINEDLLOVERRIDES", default: ""] += ";winecoreaudio.drv=d" }
+        if muted { env["WINEDLLOVERRIDES", default: ""] += ";\(SteamStore.noSound)" }
 
         let running = (try? await steam.processes()) ?? []
         if running.contains(exe.lastPathComponent.lowercased()) {
@@ -59,14 +62,13 @@ public struct GameStore: Sendable {
         if !steamUp { _ = try await steam.start() }
         try await waitForSignIn(after: steamUp ? nil : started)
 
-        switch profile.launch {
-        case .direct:
-            return .launched(pid: try runner.spawn([exe.path], cwd: folder, environmentOverrides: env))
-        case .throughSteam:
+        if profile.launch == .throughSteam && extraEnvironment.isEmpty && steam.gameRenderer == profile.renderer
+            && steam.gamesMuted == muted {
             let pid = try runner.spawn([steam.steamExe.path] + SteamStore.launchFlags + ["-applaunch", String(profile.appid)],
-                                       cwd: steam.steamFolder, environmentOverrides: env)
+                                       cwd: steam.steamFolder)
             return .launched(pid: pid)
         }
+        return .launched(pid: try runner.spawn([exe.path], cwd: folder, environmentOverrides: env))
     }
 
     public func isRunning(_ profile: GameProfile) async throws -> Bool {
