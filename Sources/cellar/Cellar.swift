@@ -27,7 +27,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [DoctorCommand.self, Play.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
+        subcommands: [DoctorCommand.self, Play.self, Check.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
     )
 }
 
@@ -275,5 +275,26 @@ struct Play: AsyncParsableCommand {
         case .launched: break
         case .broughtForward: print("\(profile.name) is already running; bringing it forward.")
         }
+    }
+}
+
+struct Check: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Start a game and measure it: frame rate, window, sound, renderer, Wine errors, saves.",
+        discussion: "Play normally while it runs. The game keeps running afterwards.")
+    @Argument(help: "The game: its Cellar id (rain-world), Steam appid or name.") var game: String
+    @Option(help: "How long to measure.") var seconds = 120
+
+    func run() async throws {
+        try Doctor(paths: CellarPaths()).requireRosetta()
+        guard let profile = GameProfiles.find(game, in: try GameProfiles.bundled()) else { throw GameError.unknownGame(game) }
+        guard seconds >= 10 else { throw ValidationError("Measure for at least 10 seconds.") }
+        let paths = CellarPaths()
+        let steam = steamStore()
+        let check = GameCheck(paths: paths, games: GameStore(paths: paths, steam: steam), steam: steam)
+        print("Starting \(profile.name) (\(profile.renderer.displayName)) and measuring for \(seconds) s. Play normally…")
+        let report = try await check.run(profile, seconds: seconds)
+        print("Report: \(try report.write(to: check.reportFolder).path)")
+        print(report.automaticVerdict)
     }
 }

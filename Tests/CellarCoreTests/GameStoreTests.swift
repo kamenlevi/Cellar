@@ -5,7 +5,7 @@ import Testing
 /// The shared Steam bottle over a fake engine, with Outer Wilds "installed" in it. The fake `wine` records each
 /// call with the environment that matters, plays Steam (launching it writes a healthy tasklist and, unless told
 /// not to, a signed-in connection log) and answers tasklist from a file.
-private struct GameRig {
+struct GameRig {
     let tmp: TempRoot
     let calls: URL
     let tasklist: URL
