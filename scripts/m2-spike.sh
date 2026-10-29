@@ -63,7 +63,9 @@ log stream --style compact --predicate 'eventMessage CONTAINS "metal-HUD"' > "$h
 logpid=$!
 
 echo "Starting ${title} with ${variant}…"
-(cd "$game" && nohup wine "$game/$exe_name" > "$gamelog" 2>&1 &)
+# Not through nohup: it is a protected system binary, so macOS strips every DYLD_* variable from it and its children,
+# and Wine then can't find the engine's FreeType, GnuTLS or MoltenVK (DXVK has no Vulkan and the game crashes).
+(cd "$game" && wine "$game/$exe_name" > "$gamelog" 2>&1 < /dev/null &)
 
 sleep 45
 gpid=$(pgrep -f "$exe_name" | head -1 || true)
