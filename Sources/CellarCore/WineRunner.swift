@@ -36,10 +36,11 @@ public struct WineRunner: Sendable {
 
     /// Starts `wine args` and returns its pid at once, without waiting for it to finish.
     @discardableResult
-    public func spawn(_ args: [String], cwd: URL? = nil) throws -> Int32 {
+    public func spawn(_ args: [String], cwd: URL? = nil, environmentOverrides: [String: String] = [:]) throws -> Int32 {
         let log = try openLog()
         try log.write(contentsOf: Data(header(engine.wineBinary, args).utf8))
         let process = makeProcess(engine.wineBinary, args, cwd: cwd, output: log)
+        if !environmentOverrides.isEmpty { process.environment?.merge(environmentOverrides) { $1 } }
         LiveProcesses.shared.keep(process)
         process.terminationHandler = { finished in
             try? log.close()

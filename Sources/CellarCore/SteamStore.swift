@@ -181,14 +181,15 @@ public struct SteamStore: Sendable {
         }
     }
 
-    public func start() async throws -> StartOutcome {
+    /// `muted` starts Steam with no sound driver, and so every game it launches: nothing can make a sound on this Mac.
+    public func start(muted: Bool = false) async throws -> StartOutcome {
         guard isInstalled() else { throw SteamError.notInstalled }
         var outcome: StartOutcome
         do {
             let running = try await processes()
             if running.contains("steam.exe") && running.contains("steamwebhelper.exe") {
                 // Steam hands this to the instance that's already running, which shows its window.
-                try launch()
+                try bottles.runner(for: name, mode: .interactive).spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder)
                 return .broughtForward
             }
             // steam.exe without its window process is stuck too: clicking its Dock icon does nothing.
@@ -202,19 +203,44 @@ public struct SteamStore: Sendable {
             try await bottles.kill(name)
             outcome = .clearedStaleStateThenStarted
         }
-        try launch()
+        try launch(muted: muted)
         if try await windowAppears() { return outcome }
 
         // Seen after a forced stop: Steam's first start loses its window process once; a second start works.
         try await bottles.kill(name)
-        try launch()
+        try launch(muted: muted)
         if try await windowAppears() { return .restartedAfterNoWindow }
         throw SteamError.noWindow
     }
 
-    private func launch() throws {
-        try bottles.runner(for: name, mode: .interactive).spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder)
+    /// Starts a fresh Steam. It runs with D3DMetal when that is imported, because the games Steam launches get their
+    /// DLL settings from Steam's own environment: Wine drops WINEDLLOVERRIDES set anywhere in between.
+    private func launch(muted: Bool) throws {
+        let runner = try bottles.runner(for: name, mode: .interactive)
+        var renderer = Renderer.wined3d
+        var env = WineEnvironment.make(engine: runner.engine, prefix: runner.prefix, mode: .interactive)
+        if let d3dmetal = try D3DMetalStore(paths: paths).current() {
+            env = try RendererSetup.environment(.d3dmetal, engine: runner.engine, d3dmetal: d3dmetal, paths: paths, base: env)
+            env["ROSETTA_ADVERTISE_AVX"] = "1"
+            renderer = .d3dmetal
+        }
+        if muted { env["WINEDLLOVERRIDES", default: ""] += ";\(Self.noSound)" }
+        try runner.spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder, environmentOverrides: env)
+        try Data((renderer.rawValue + (muted ? " muted" : "")).utf8).write(to: rendererFile)
     }
+
+    /// The DLL override that leaves a program with no sound driver at all.
+    static let noSound = "winecoreaudio.drv=d"
+
+    private var rendererFile: URL { paths.bottle(Self.bottleName).appending(path: "steam-renderer") }
+
+    /// The renderer of the games Steam launches, when Cellar started this Steam (nil after a stop, or never started).
+    public var gameRenderer: Renderer? {
+        (try? String(contentsOf: rendererFile, encoding: .utf8)).flatMap { Renderer(rawValue: String($0.prefix { $0 != " " })) }
+    }
+
+    /// Whether the games Steam launches have no sound driver (Steam was started muted).
+    public var gamesMuted: Bool { (try? String(contentsOf: rendererFile, encoding: .utf8))?.hasSuffix(" muted") ?? false }
 
     /// Waits for steamwebhelper.exe, Steam's window process. A session that doesn't answer counts as "not yet".
     private func windowAppears() async throws -> Bool {
@@ -238,11 +264,12 @@ public struct SteamStore: Sendable {
             }
         }
         try await bottles.kill(name)
+        try? FileManager.default.removeItem(at: rendererFile)
     }
 
-    public func restart() async throws -> StartOutcome {
+    public func restart(muted: Bool = false) async throws -> StartOutcome {
         try await stop()
-        return try await start()
+        return try await start(muted: muted)
     }
 
     public func status() async throws -> SteamStatus {

@@ -27,7 +27,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [DoctorCommand.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
+        subcommands: [DoctorCommand.self, Play.self, Check.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
     )
 }
 
@@ -227,10 +227,11 @@ struct SteamCommand: AsyncParsableCommand {
 
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Start Steam, or bring its window forward if it's running.")
+        @Flag(help: "Start Steam with no sound driver, so no game it launches can make a sound.") var mute = false
         func run() async throws {
             try Doctor(paths: CellarPaths()).requireRosetta()
             SteamCommand.warnAboutMacSteam()
-            SteamCommand.say(try await steamStore().start())
+            SteamCommand.say(try await steamStore().start(muted: mute))
         }
     }
 
@@ -258,5 +259,46 @@ struct SteamCommand: AsyncParsableCommand {
             try Doctor(paths: CellarPaths()).requireRosetta()
             for line in try await steamStore().status().lines() { print(line) }
         }
+    }
+}
+
+struct Play: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Play a game from your Steam library (starts Steam first if needed).")
+    @Argument(help: "The game: its Cellar id (outer-wilds), Steam appid or name.") var game: String
+    @Flag(help: "Start it with no sound at all.") var mute = false
+
+    func run() async throws {
+        try Doctor(paths: CellarPaths()).requireRosetta()
+        guard let profile = GameProfiles.find(game, in: try GameProfiles.bundled()) else { throw GameError.unknownGame(game) }
+        let paths = CellarPaths()
+        let games = GameStore(paths: paths, steam: steamStore())
+        print("Starting \(profile.name) (\(profile.renderer.displayName))…")
+        switch try await games.play(profile, muted: mute) {
+        case .launched(_, let restartedSteam):
+            if restartedSteam { print("Steam didn't respond to the launch, so Cellar restarted it; \(profile.name) is starting now.") }
+        case .broughtForward: print("\(profile.name) is already running; bringing it forward.")
+        }
+    }
+}
+
+struct Check: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Start a game and measure it: frame rate, window, sound, renderer, Wine errors, saves.",
+        discussion: "Play normally while it runs. The game keeps running afterwards.")
+    @Argument(help: "The game: its Cellar id (rain-world), Steam appid or name.") var game: String
+    @Option(help: "How long to measure.") var seconds = 120
+    @Flag(help: "Start it with no sound at all (sound isn't judged then).") var mute = false
+
+    func run() async throws {
+        try Doctor(paths: CellarPaths()).requireRosetta()
+        guard let profile = GameProfiles.find(game, in: try GameProfiles.bundled()) else { throw GameError.unknownGame(game) }
+        guard seconds >= 10 else { throw ValidationError("Measure for at least 10 seconds.") }
+        let paths = CellarPaths()
+        let steam = steamStore()
+        let check = GameCheck(paths: paths, games: GameStore(paths: paths, steam: steam), steam: steam)
+        print("Starting \(profile.name) (\(profile.renderer.displayName)) and measuring for \(seconds) s. Play normally…")
+        let report = try await check.run(profile, seconds: seconds, muted: mute)
+        print("Report: \(try report.write(to: check.reportFolder).path)")
+        print(report.automaticVerdict)
     }
 }

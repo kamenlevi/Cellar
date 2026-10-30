@@ -1,0 +1,27 @@
+[
+  {
+    "id": "outer-wilds",
+    "name": "Outer Wilds",
+    "appid": 753640,
+    "exe": "OuterWilds.exe",
+    "renderer": "d3dmetal",
+    "saves": "AppData/LocalLow/Mobius Digital/Outer Wilds"
+  },
+  {
+    "id": "rain-world",
+    "name": "Rain World",
+    "appid": 312520,
+    "exe": "RainWorld.exe",
+    "renderer": "d3dmetal",
+    "saves": "AppData/LocalLow/Videocult/Rain World",
+    "fps": 60
+  },
+  {
+    "id": "animal-well",
+    "name": "ANIMAL WELL",
+    "appid": 813230,
+    "exe": "Animal Well.exe",
+    "renderer": "d3dmetal",
+    "saves": "AppData/LocalLow/Billy Basso/Animal Well"
+  }
+]
