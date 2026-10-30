@@ -4,12 +4,17 @@ import Testing
 
 /// The shared Steam bottle over a fake engine, with Outer Wilds "installed" in it. The fake `wine` records each
 /// call with the environment that matters, plays Steam (launching it writes a healthy tasklist and, unless told
-/// not to, a signed-in connection log) and answers tasklist from a file.
+/// not to, a signed-in connection log; `-applaunch` adds the game to the tasklist unless Steam is `deaf`, or `stale`
+/// until its next start; `-shutdown` empties it) and answers tasklist from a file.
 struct GameRig {
     let tmp: TempRoot
     let calls: URL
     let tasklist: URL
     let noSignIn: URL
+    /// Steam ignores launches until it is started again (seen 2026-10-30 after a night of running).
+    let stale: URL
+    /// Steam ignores every launch.
+    let deaf: URL
     let steam: SteamStore
     let games: GameStore
 
@@ -18,6 +23,8 @@ struct GameRig {
         calls = tmp.url.appending(path: "calls.txt")
         tasklist = tmp.url.appending(path: "tasklist.csv")
         noSignIn = tmp.url.appending(path: "no-sign-in")
+        stale = tmp.url.appending(path: "stale")
+        deaf = tmp.url.appending(path: "deaf")
         let steamDir = #""$WINEPREFIX/drive_c/Program Files (x86)/Steam""#
         let wine = """
         #!/bin/sh
@@ -27,12 +34,19 @@ struct GameRig {
           *SteamSetup.exe) mkdir -p \(steamDir) && touch \(steamDir)/steam.exe ;;
           tasklist) cat '\(tasklist.path)' 2>/dev/null ;;
         esac
-        case "$*" in *steam.exe\\ -no-cef-sandbox)
-          printf '"steam.exe","32"\\r\\n"steamwebhelper.exe","40"\\r\\n' > '\(tasklist.path)'
-          if [ ! -f '\(noSignIn.path)' ]; then
-            mkdir -p \(steamDir)/logs
-            printf '[%s] [Logged On, 4, 7] [U:1:1] RecvMsgClientLogOnResponse() : processing complete\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/connection_log.txt
-          fi ;;
+        case "$*" in
+          *steam.exe\\ -no-cef-sandbox)
+            printf '"steam.exe","32"\\r\\n"steamwebhelper.exe","40"\\r\\n' > '\(tasklist.path)'
+            rm -f '\(stale.path)'
+            if [ ! -f '\(noSignIn.path)' ]; then
+              mkdir -p \(steamDir)/logs
+              printf '[%s] [Logged On, 4, 7] [U:1:1] RecvMsgClientLogOnResponse() : processing complete\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/connection_log.txt
+            fi ;;
+          *-applaunch\\ *)
+            if [ ! -f '\(stale.path)' ] && [ ! -f '\(deaf.path)' ]; then
+              printf '"OuterWilds.exe","50"\\r\\n' >> '\(tasklist.path)'
+            fi ;;
+          *-shutdown) : > '\(tasklist.path)' ;;
         esac
         exit 0
         """
@@ -69,7 +83,8 @@ struct GameRig {
         }
         if !signedIn { try Data().write(to: noSignIn) }
         try? FileManager.default.removeItem(at: calls)
-        games = GameStore(paths: tmp.paths, steam: steam, signInWait: .seconds(1), pollInterval: .milliseconds(200))
+        games = GameStore(paths: tmp.paths, steam: steam, signInWait: .seconds(1), launchWait: .seconds(2),
+                          pollInterval: .milliseconds(200))
     }
 
     var lines: [String] { ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
@@ -210,4 +225,51 @@ private var throughSteam: GameProfile {
     let line = try #require(await rig.waitFor("OuterWilds.exe |"))
     #expect(line.contains("winecoreaudio.drv=d"))
     #expect(!rig.lines.contains { $0.contains("-applaunch") })
+}
+
+@Test func playWaitsUntilSteamHasReallyStartedTheGame() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    guard case .launched(_, let restarted) = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(!restarted)
+    #expect(try await rig.games.isRunning(throughSteam))
+    #expect(rig.lines.filter { $0.contains("steam.exe -no-cef-sandbox |") }.count == 1)
+}
+
+@Test func steamThatIgnoresTheLaunchIsRestartedOnceAndAskedAgain() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start()
+    try Data().write(to: rig.stale)
+    guard case .launched(_, let restarted) = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(restarted)
+    #expect(rig.lines.filter { $0.contains("-applaunch 753640") }.count == 2)
+    #expect(rig.lines.contains { $0.contains("-shutdown") })
+    #expect(rig.steam.gameRenderer == .d3dmetal)  // the new Steam still gives its games D3DMetal
+}
+
+@Test func steamThatNeverLaunchesTheGameEndsWithASentence() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.deaf)
+    await #expect(throws: GameError.steamIgnoredLaunch("Outer Wilds")) { try await rig.games.play(throughSteam) }
+    #expect(rig.lines.filter { $0.contains("-applaunch 753640") }.count == 2)
+}
+
+@Test func steamIsNotRestartedUnderAnotherRunningGame() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start()
+    try Data().write(to: rig.stale)
+    let handle = try FileHandle(forWritingTo: rig.tasklist)
+    try handle.seekToEnd(); try handle.write(contentsOf: Data("\"Animal Well.exe\",\"60\"\r\n".utf8)); try handle.close()
+    await #expect(throws: GameError.steamIgnoredLaunchBeside("Outer Wilds", other: "animal well.exe")) {
+        try await rig.games.play(throughSteam)
+    }
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func aMutedSteamComesBackMutedAfterARestart() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start(muted: true)
+    try Data().write(to: rig.stale)
+    _ = try await rig.games.play(throughSteam, muted: true)
+    #expect(rig.steam.gamesMuted)
+    #expect(rig.lines.filter { $0.contains("steam.exe -no-cef-sandbox |") }.allSatisfy { $0.contains("winecoreaudio.drv=d") })
 }

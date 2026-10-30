@@ -92,6 +92,9 @@ extension GameError: LocalizedError {
         case .notInstalled(let name): "\(name) isn't installed in Cellar's Steam."
         case .stillDownloading(let name): "\(name) is still downloading."
         case .steamNotSignedIn: "Steam didn't sign in within 90 seconds."
+        case .steamIgnoredLaunch(let name): "Steam didn't start \(name), even after Cellar restarted it."
+        case .steamIgnoredLaunchBeside(let name, let other):
+            "Steam didn't start \(name). Cellar didn't restart Steam, because \(other) is running beside it."
         }
     }
 
@@ -101,6 +104,8 @@ extension GameError: LocalizedError {
         case .notInstalled: "Install it in the Steam window first (open it with: cellar steam)."
         case .stillDownloading: "Wait until Steam shows it as ready, then try again."
         case .steamNotSignedIn: "Sign in in the Steam window (cellar steam), then try again."
+        case .steamIgnoredLaunch: "Try Play in the Steam window (cellar steam). If that does nothing too, tell Claude."
+        case .steamIgnoredLaunchBeside(_, let other): "Quit \(other), then try again."
         }
     }
 }

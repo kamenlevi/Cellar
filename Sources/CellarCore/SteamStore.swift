@@ -267,9 +267,9 @@ public struct SteamStore: Sendable {
         try? FileManager.default.removeItem(at: rendererFile)
     }
 
-    public func restart() async throws -> StartOutcome {
+    public func restart(muted: Bool = false) async throws -> StartOutcome {
         try await stop()
-        return try await start()
+        return try await start(muted: muted)
     }
 
     public func status() async throws -> SteamStatus {

@@ -274,7 +274,8 @@ struct Play: AsyncParsableCommand {
         let games = GameStore(paths: paths, steam: steamStore())
         print("Starting \(profile.name) (\(profile.renderer.displayName))…")
         switch try await games.play(profile, muted: mute) {
-        case .launched: break
+        case .launched(_, let restartedSteam):
+            if restartedSteam { print("Steam didn't respond to the launch, so Cellar restarted it; \(profile.name) is starting now.") }
         case .broughtForward: print("\(profile.name) is already running; bringing it forward.")
         }
     }

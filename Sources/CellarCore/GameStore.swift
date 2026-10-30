@@ -5,10 +5,15 @@ public enum GameError: Error, Equatable {
     case notInstalled(String)
     case stillDownloading(String)
     case steamNotSignedIn
+    /// Steam took the launch request but never started the game, even after a restart.
+    case steamIgnoredLaunch(String)
+    /// Steam ignored the launch, and Cellar left it running because `other` runs in its bottle too.
+    case steamIgnoredLaunchBeside(String, other: String)
 }
 
 public enum PlayOutcome: Equatable, Sendable {
-    case launched(pid: Int32)
+    /// `restartedSteam`: Steam ignored the first request, so Cellar restarted it and asked again.
+    case launched(pid: Int32, restartedSteam: Bool = false)
     case broughtForward
 }
 
@@ -17,12 +22,16 @@ public struct GameStore: Sendable {
     let paths: CellarPaths
     let steam: SteamStore
     let signInWait: Duration
+    /// How long Steam may take to start the game after being asked.
+    let launchWait: Duration
     let pollInterval: Duration
 
-    public init(paths: CellarPaths, steam: SteamStore, signInWait: Duration = .seconds(90), pollInterval: Duration = .seconds(2)) {
+    public init(paths: CellarPaths, steam: SteamStore, signInWait: Duration = .seconds(90),
+                launchWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
         self.paths = paths
         self.steam = steam
         self.signInWait = signInWait
+        self.launchWait = launchWait
         self.pollInterval = pollInterval
     }
 
@@ -64,11 +73,43 @@ public struct GameStore: Sendable {
 
         if profile.launch == .throughSteam && extraEnvironment.isEmpty && steam.gameRenderer == profile.renderer
             && steam.gamesMuted == muted {
-            let pid = try runner.spawn([steam.steamExe.path] + SteamStore.launchFlags + ["-applaunch", String(profile.appid)],
-                                       cwd: steam.steamFolder)
-            return .launched(pid: pid)
+            return try await launchThroughSteam(profile, exe: exe.lastPathComponent.lowercased(), muted: muted)
         }
         return .launched(pid: try runner.spawn([exe.path], cwd: folder, environmentOverrides: env))
+    }
+
+    /// Asks Steam to launch the game and waits for it. A Steam that has run for a long time can take the request and do
+    /// nothing, with no trace in its logs (2026-10-30); a restarted Steam launches it. So Cellar restarts Steam once,
+    /// unless something else runs in its bottle that a restart would kill.
+    private func launchThroughSteam(_ profile: GameProfile, exe: String, muted: Bool) async throws -> PlayOutcome {
+        let runner = try steam.bottles.runner(for: steam.name, mode: .interactive)
+        func ask() throws -> Int32 {
+            try runner.spawn([steam.steamExe.path] + SteamStore.launchFlags + ["-applaunch", String(profile.appid)],
+                             cwd: steam.steamFolder)
+        }
+        var pid = try ask()
+        if try await gameAppears(exe) { return .launched(pid: pid) }
+
+        let others = ((try? await steam.processes()) ?? []).filter {
+            !SteamStore.wineSystemProcesses.contains($0) && !$0.hasPrefix("steam") && $0 != "gameoverlayui.exe"
+        }
+        if let other = others.first { throw GameError.steamIgnoredLaunchBeside(profile.name, other: other) }
+        let restarted = Date()
+        _ = try await steam.restart(muted: muted)
+        try await waitForSignIn(after: restarted)
+        pid = try ask()
+        if try await gameAppears(exe) { return .launched(pid: pid, restartedSteam: true) }
+        throw GameError.steamIgnoredLaunch(profile.name)
+    }
+
+    private func gameAppears(_ exe: String) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + launchWait
+        repeat {
+            try await Task.sleep(for: pollInterval)
+            if let running = try? await steam.processes(), running.contains(exe) { return true }
+        } while clock.now < deadline
+        return false
     }
 
     public func isRunning(_ profile: GameProfile) async throws -> Bool {
