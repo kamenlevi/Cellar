@@ -5,7 +5,8 @@
     "appid": 753640,
     "exe": "OuterWilds.exe",
     "renderer": "d3dmetal",
-    "saves": "AppData/LocalLow/Mobius Digital/Outer Wilds"
+    "saves": "AppData/LocalLow/Mobius Digital/Outer Wilds",
+    "fps": 60
   },
   {
     "id": "rain-world",
@@ -23,5 +24,28 @@
     "exe": "Animal Well.exe",
     "renderer": "d3dmetal",
     "saves": "AppData/LocalLow/Billy Basso/Animal Well"
+  },
+  {
+    "id": "journey",
+    "name": "Journey",
+    "appid": 638230,
+    "exe": "Journey.exe",
+    "renderer": "d3dmetal",
+    "saves": "AppData/Local/Annapurna Interactive/Journey"
+  },
+  {
+    "id": "chants-of-sennaar",
+    "name": "Chants of Sennaar",
+    "appid": 1931770,
+    "exe": "Chants Of Sennaar.exe",
+    "renderer": "d3dmetal",
+    "saves": "AppData/LocalLow/Rundisc/Chants Of Sennaar"
+  },
+  {
+    "id": "leap-year",
+    "name": "Leap Year",
+    "appid": 2951770,
+    "exe": "Leap Year.exe",
+    "renderer": "d3dmetal"
   }
 ]
