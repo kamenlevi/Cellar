@@ -32,7 +32,16 @@ Fixed since: while Steam's launch waits on a notice, `cellar play` keeps waiting
 minutes) and, if nobody answers, says "Steam is waiting for you to answer something in its window before it starts
 <game>" instead of restarting Steam.
 
-Still to see: Journey and Outer Wilds past the notice (Kamen presses OK in the Steam window; then another muted look).
+Kamen then started each once and pressed OK (20:39-20:40); Steam logged `LaunchApp continues with user response
+"ShowInterstitials"` and the game started. Steam shows the notice once per game.
+
+Second muted look, 20:43-20:48 (no notice this time; Steam logs a "waiting for user response" line on every launch,
+answered in the same second by "continues", so only the last line for the game counts):
+
+| Game | Renderer | What happened |
+|---|---|---|
+| Journey | D3DMetal | Reached the main menu (Start, Options, Quit to Desktop) within 60 s, full screen; window title "Journey (D3D11) (x64)". D3DMetal's `d3d11.dll` loaded. Still running at 120 s. |
+| Outer Wilds | D3DMetal | Reached the title with its first-run "Enter Profile Name" box (v1.1.16), full screen. D3DMetal's `d3d11.dll` loaded. Still running at 150 s. |
 
 ## Save folders
 
