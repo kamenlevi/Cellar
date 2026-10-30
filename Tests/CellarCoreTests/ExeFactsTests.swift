@@ -34,3 +34,11 @@ private func exe(_ data: Data) throws -> URL {
     let cut = PEFixture.make(machine: 0x8664, imports: ["d3d11.dll"]).prefix(0x90)
     #expect(throws: ExeFactsError.notAWindowsProgram) { try ExeFacts.read(try exe(Data(cut))) }
 }
+
+@Test func brokenImportTableKeepsTheBitness() throws {
+    // A packed 32-bit exe whose import table points past the end of the file: still 32-bit, imports unknown.
+    let cut = PEFixture.make(machine: 0x14c, imports: ["d3d11.dll"]).prefix(0x200 + 8)
+    let facts = try ExeFacts.read(try exe(Data(cut)))
+    #expect(!facts.is64Bit)
+    #expect(facts.imports.isEmpty)
+}

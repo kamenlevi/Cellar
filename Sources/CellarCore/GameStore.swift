@@ -9,6 +9,8 @@ public enum GameError: Error, Equatable {
     case steamIgnoredLaunch(String)
     /// Steam ignored the launch, and Cellar left it running because `other` runs in its bottle too.
     case steamIgnoredLaunchBeside(String, other: String)
+    /// Steam was still running an installer for the game (DirectX, VC++) when Cellar stopped waiting.
+    case steamStillInstalling(String, installer: String)
 }
 
 public enum PlayOutcome: Equatable, Sendable {
@@ -101,6 +103,13 @@ public struct GameStore: Sendable {
         var pid = try ask()
         if try await gameAppears(exe, besides: before) { return .launched(pid: pid) }
 
+        // Never restart Steam, or blame anything, while it is still installing for the game.
+        func stillInstalling() async throws {
+            if let installer = ((try? await steam.processes()) ?? []).first(where: { Self.isProgram($0) && !before.contains($0) }) {
+                throw GameError.steamStillInstalling(profile.name, installer: installer)
+            }
+        }
+        try await stillInstalling()
         if let other = ((try? await steam.processes()) ?? []).first(where: Self.isProgram) {
             throw GameError.steamIgnoredLaunchBeside(profile.name, other: other)
         }
@@ -110,6 +119,7 @@ public struct GameStore: Sendable {
         before = Set((try? await steam.processes()) ?? [])
         pid = try ask()
         if try await gameAppears(exe, besides: before) { return .launched(pid: pid, restartedSteam: true) }
+        try await stillInstalling()
         throw GameError.steamIgnoredLaunch(profile.name)
     }
 

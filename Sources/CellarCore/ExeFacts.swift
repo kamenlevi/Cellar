@@ -47,22 +47,25 @@ public struct ExeFacts: Equatable, Sendable {
         default: throw ExeFactsError.notAWindowsProgram
         }
         let directories = optional + (wide ? 112 : 96)
-        let importRVA = try u32(directories - 4) > 1 ? try u32(directories + 8) : 0
 
+        // From here on nothing throws: a packed exe or a damaged import table still says how wide it is.
+        func r32(_ at: Int) -> Int? { try? u32(at) }
         struct Section { var va, size, raw: Int }
-        let sections = try (0..<sectionCount).map { i in
+        let sections: [Section] = (0..<sectionCount).compactMap { i in
             let s = optional + optionalSize + 40 * i
-            return Section(va: try u32(s + 12), size: max(try u32(s + 8), try u32(s + 16)), raw: try u32(s + 20))
+            guard let va = r32(s + 12), let size = r32(s + 16), let raw = r32(s + 20), raw != 0 else { return nil }
+            return Section(va: va, size: size, raw: raw)
         }
+        // Only bytes that are in the file: a section's zero-filled tail (VirtualSize past SizeOfRawData) has none.
         func offset(_ rva: Int) -> Int? {
-            sections.first { rva >= $0.va && rva < $0.va + $0.size }.map { rva - $0.va + $0.raw }
+            sections.first { rva >= $0.va && rva - $0.va < $0.size }.map { rva - $0.va + $0.raw }
         }
 
         var imports = Set<String>()
+        let importRVA = (r32(directories - 4) ?? 0) > 1 ? r32(directories + 8) ?? 0 : 0
         if importRVA != 0, var descriptor = offset(importRVA) {
             for _ in 0..<1024 {
-                let nameRVA = try u32(descriptor + 12)
-                if nameRVA == 0 { break }
+                guard let nameRVA = r32(descriptor + 12), nameRVA != 0 else { break }
                 if let start = offset(nameRVA), start < bytes.count {
                     let name = bytes[start..<min(start + 256, bytes.count)].prefix { $0 != 0 }
                     imports.insert(String(decoding: name, as: UTF8.self).lowercased())

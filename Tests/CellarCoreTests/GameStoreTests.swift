@@ -19,6 +19,8 @@ struct GameRig {
     let deaf: URL
     /// Steam runs DXSETUP.exe for 3 s before the game starts, as on a first launch.
     let slowSetup: URL
+    /// Steam's DXSETUP.exe never finishes.
+    let endlessSetup: URL
     let steam: SteamStore
     let games: GameStore
 
@@ -30,6 +32,7 @@ struct GameRig {
         stale = tmp.url.appending(path: "stale")
         deaf = tmp.url.appending(path: "deaf")
         slowSetup = tmp.url.appending(path: "slow-setup")
+        endlessSetup = tmp.url.appending(path: "endless-setup")
         let steamDir = #""$WINEPREFIX/drive_c/Program Files (x86)/Steam""#
         let wine = """
         #!/bin/sh
@@ -50,6 +53,8 @@ struct GameRig {
           *-applaunch\\ *)
             if [ -f '\(stale.path)' ] || [ -f '\(deaf.path)' ]; then
               :
+            elif [ -f '\(endlessSetup.path)' ]; then
+              printf '"DXSETUP.exe","70"\\r\\n' >> '\(tasklist.path)'
             elif [ -f '\(slowSetup.path)' ]; then
               printf '"DXSETUP.exe","70"\\r\\n' >> '\(tasklist.path)'
               (sleep 3; grep -v DXSETUP '\(tasklist.path)' > '\(tasklist.path).new'; mv '\(tasklist.path).new' '\(tasklist.path)'
@@ -95,7 +100,7 @@ struct GameRig {
         if !signedIn { try Data().write(to: noSignIn) }
         try? FileManager.default.removeItem(at: calls)
         games = GameStore(paths: tmp.paths, steam: steam, signInWait: .seconds(1), launchWait: .seconds(2),
-                          setupWait: .seconds(10), pollInterval: .milliseconds(200))
+                          setupWait: .seconds(5), pollInterval: .milliseconds(200))
     }
 
     var lines: [String] { ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
@@ -330,4 +335,13 @@ private var throughSteam: GameProfile {
     #expect(count.withLock { $0 } == 0)
     _ = try await rig.games.play(outerWilds, starting: { count.withLock { $0 += 1 } })
     #expect(count.withLock { $0 } == 1)
+}
+
+@Test func anInstallerThatNeverEndsIsNotKilledOrBlamed() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.endlessSetup)
+    await #expect(throws: GameError.steamStillInstalling("Outer Wilds", installer: "dxsetup.exe")) {
+        try await rig.games.play(throughSteam)
+    }
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
 }
