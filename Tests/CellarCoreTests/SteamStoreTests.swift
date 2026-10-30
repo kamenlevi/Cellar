@@ -299,3 +299,55 @@ private func spawns(_ rig: SteamRig) -> Int { rig.lines(rig.calls).filter { $0.c
     #expect(SteamError.noWindow.errorDescription == "Steam started but its window never appeared, even after one automatic restart.")
     #expect(SteamError.noWindow.recoverySuggestion == "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log")
 }
+
+// MARK: - Steam for Mac (or another computer) took the account: Steam says "no internet connection"
+
+private func writeConnectionLog(_ text: String, for steam: SteamStore) throws {
+    let logs = steam.steamFolder.appending(path: "logs")
+    try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+    try Data(text.utf8).write(to: logs.appending(path: "connection_log.txt"))
+}
+
+@Test func steamSignedOutElsewhereIsRestartedToSignBackIn() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    try writeConnectionLog(SteamLogFixtures.connectionReplaced, for: steam)
+    #expect(try await steam.start() == .signedBackIn)
+    #expect(rig.lines(rig.calls).contains { $0.contains("-shutdown") })
+    #expect(spawns(rig) == 1)
+}
+
+@Test func steamForMacStillSignedInIsNamedNotFought() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore(macSteam: true)
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    try writeConnectionLog(SteamLogFixtures.connectionReplaced, for: steam)
+    await #expect(throws: SteamError.signedInElsewhere) { try await steam.start() }
+    #expect(!rig.lines(rig.calls).contains { $0.contains("-shutdown") })
+    #expect(spawns(rig) == 0)
+}
+
+@Test func aMutedSteamStaysMutedWhenItSignsBackIn() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    try writeConnectionLog(SteamLogFixtures.connectionReplaced, for: steam)
+    try Data("wined3d muted".utf8).write(to: rig.tmp.paths.bottle(SteamStore.bottleName).appending(path: "steam-renderer"))
+    #expect(try await steam.start() == .signedBackIn)
+    #expect(steam.gamesMuted)
+}
+
+@Test func statusSaysTheAccountSignedInElsewhere() {
+    let s = SteamStatus(installed: true, running: true, webhelperRunning: true, macSteamRunning: false,
+                        health: SteamHealth(signIn: .signedInElsewhere(since: Date()), webhelperLaunchesLast10Min: 1,
+                                            crashLoop: false, lastUpdateCheck: nil))
+    let line = s.lines().first { $0.hasPrefix("Signed in:") }
+    #expect(line?.contains("somewhere else") == true)
+    #expect(line?.contains("cellar steam") == true)
+}
+
+@Test func signedInElsewhereErrorSaysWhatToDo() {
+    #expect(SteamError.signedInElsewhere.errorDescription == "Steam is signed out, because your account signed in on Steam for Mac.")
+    #expect(SteamError.signedInElsewhere.recoverySuggestion == "Quit Steam for Mac (Steam ▸ Quit Steam), then run: cellar steam")
+}

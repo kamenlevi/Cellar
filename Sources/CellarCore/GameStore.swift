@@ -80,8 +80,9 @@ public struct GameStore: Sendable {
 
         let started = Date()
         let steamUp = running.contains("steam.exe") && running.contains("steamwebhelper.exe")
-        if !steamUp { _ = try await steam.start() }
-        try await waitForSignIn(after: steamUp ? nil : started)
+        let signedIn = steamUp && !steam.signedInElsewhere
+        if !signedIn { _ = try await steam.start() }
+        try await waitForSignIn(after: signedIn ? nil : started)
 
         if profile.launch == .throughSteam && extraEnvironment.isEmpty && steam.gameRenderer == profile.renderer
             && steam.gamesMuted == muted {

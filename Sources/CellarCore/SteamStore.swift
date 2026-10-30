@@ -6,6 +6,8 @@ public enum SteamError: Error, Equatable {
     case installFailed(String)
     /// Steam ran but its window process (steamwebhelper.exe) never came up, even after one restart.
     case noWindow
+    /// Steam for Mac signed in to the account, so Steam signed Cellar's Steam out; restarting would just swap them back.
+    case signedInElsewhere
 }
 
 public struct SteamStatus: Equatable, Sendable {
@@ -29,6 +31,8 @@ public struct SteamStatus: Equatable, Sendable {
         let signIn: String = switch health.signIn {
         case .signedIn(let since): "yes (since \(when(since)))"
         case .signedOut: "no"
+        case .signedInElsewhere:
+            "no: your account signed in somewhere else (Steam for Mac or another computer), so Steam signed this one out. Run: cellar steam"
         case .unknown: "unknown"
         }
         let loop = health.crashLoop
@@ -52,6 +56,8 @@ public enum StartOutcome: Equatable, Sendable {
     case clearedStaleStateThenStarted
     /// Steam came up without its window process, so Cellar restarted it once.
     case restartedAfterNoWindow
+    /// Steam was signed out because the account signed in somewhere else, so Cellar restarted it to sign back in.
+    case signedBackIn
 }
 
 /// Windows Steam in Cellar's one shared bottle, "Steam". Kamen signs in himself; Cellar never touches credentials.
@@ -188,6 +194,14 @@ public struct SteamStore: Sendable {
         do {
             let running = try await processes()
             if running.contains("steam.exe") && running.contains("steamwebhelper.exe") {
+                // A Steam signed out from elsewhere never reconnects by itself; a fresh one signs in with the saved login.
+                if signedInElsewhere {
+                    if macSteam() { throw SteamError.signedInElsewhere }
+                    let wasMuted = gamesMuted
+                    try await stop()
+                    _ = try await start(muted: muted || wasMuted)
+                    return .signedBackIn
+                }
                 // Steam hands this to the instance that's already running, which shows its window.
                 try bottles.runner(for: name, mode: .interactive).spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder)
                 return .broughtForward
@@ -272,10 +286,21 @@ public struct SteamStore: Sendable {
         return try await start(muted: muted)
     }
 
+    /// Whether Steam's log says it was signed out because the account signed in somewhere else.
+    public var signedInElsewhere: Bool {
+        if case .signedInElsewhere = health().signIn { true } else { false }
+    }
+
     public func status() async throws -> SteamStatus {
         let installed = isInstalled()
         // A session that doesn't answer in time is reported as not running.
         let running = installed ? ((try? await processes()) ?? []) : []
+        return SteamStatus(installed: installed, running: running.contains("steam.exe"),
+                           webhelperRunning: running.contains("steamwebhelper.exe"),
+                           macSteamRunning: macSteam(), health: health())
+    }
+
+    private func health() -> SteamHealth {
         let logs = steamFolder.appending(path: "logs")
         func tail(_ file: String) -> String {
             guard let handle = try? FileHandle(forReadingFrom: logs.appending(path: file)) else { return "" }
@@ -284,10 +309,7 @@ public struct SteamStore: Sendable {
             try? handle.seek(toOffset: end > 262_144 ? end - 262_144 : 0)
             return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
         }
-        let health = SteamLogs.health(connectionLog: tail("connection_log.txt"), webhelperLog: tail("webhelper.txt"),
-                                      bootstrapLog: tail("bootstrap_log.txt"), now: Date())
-        return SteamStatus(installed: installed, running: running.contains("steam.exe"),
-                           webhelperRunning: running.contains("steamwebhelper.exe"),
-                           macSteamRunning: macSteam(), health: health)
+        return SteamLogs.health(connectionLog: tail("connection_log.txt"), webhelperLog: tail("webhelper.txt"),
+                                bootstrapLog: tail("bootstrap_log.txt"), now: Date())
     }
 }

@@ -16,6 +16,21 @@ private typealias F = SteamLogFixtures
     #expect(SteamLogs.signIn(connectionLog: "") == .unknown)
 }
 
+@Test func signedOutBecauseTheAccountSignedInElsewhere() {
+    #expect(SteamLogs.signIn(connectionLog: F.connectionReplaced) == .signedInElsewhere(since: F.local("2026-10-30 18:58:13")))
+}
+
+@Test func signingBackInAfterAReplacementIsSignedIn() {
+    #expect(SteamLogs.signIn(connectionLog: F.connectionReplaced + F.connectionSignedBackIn)
+            == .signedIn(since: F.local("2026-10-30 19:38:23")))
+}
+
+@Test func anOldReplacementDoesNotExplainALaterSignOut() {
+    let later = "[2026-10-30 20:00:00] [Logged Off, 4, 0] [U:1:123456789] Sending SteamServersDisconnected_t because we were logged on\n"
+    #expect(SteamLogs.signIn(connectionLog: F.connectionReplaced + F.connectionSignedBackIn + later)
+            == .signedOut(since: F.local("2026-10-30 20:00:00")))
+}
+
 @Test func healthyWebhelperIsNotALoop() {
     let h = SteamLogs.health(connectionLog: "", webhelperLog: F.webhelperHealthy, bootstrapLog: "",
                              now: F.local("2026-08-11 16:40:00"))

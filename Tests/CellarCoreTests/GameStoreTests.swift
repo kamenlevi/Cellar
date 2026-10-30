@@ -345,3 +345,12 @@ private var throughSteam: GameProfile {
     }
     #expect(!rig.lines.contains { $0.contains("-shutdown") })
 }
+
+@Test func playSignsSteamBackInWhenItWasSignedOutElsewhere() async throws {
+    let rig = try await GameRig()
+    try Data(SteamLogFixtures.connectionReplaced.utf8)
+        .write(to: rig.steam.steamFolder.appending(path: "logs/connection_log.txt"))
+    guard case .launched = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(rig.lines.contains { $0.contains("-shutdown") })
+    #expect(rig.lines.filter { $0.contains("steam.exe -no-cef-sandbox |") }.count == 1)
+}

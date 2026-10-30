@@ -67,6 +67,7 @@ extension SteamError: LocalizedError {
         case .badInstaller(let reason): "The Steam installer download wasn't valid (\(reason)), so nothing was run."
         case .installFailed(let reason): "Steam's installer finished but Steam.exe isn't there (\(reason))."
         case .noWindow: "Steam started but its window never appeared, even after one automatic restart."
+        case .signedInElsewhere: "Steam is signed out, because your account signed in on Steam for Mac."
         }
     }
 
@@ -76,6 +77,7 @@ extension SteamError: LocalizedError {
         case .badInstaller: "Try again: cellar steam install"
         case .installFailed: "See the log: ~/Library/Logs/Cellar/Steam.log"
         case .noWindow: "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log"
+        case .signedInElsewhere: "Quit Steam for Mac (Steam ▸ Quit Steam), then run: cellar steam"
         }
     }
 }
