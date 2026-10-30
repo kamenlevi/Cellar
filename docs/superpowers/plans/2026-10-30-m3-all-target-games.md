@@ -62,7 +62,7 @@
 ## Review Focus
 
 1. **A first launch runs Steam's installers** (DirectX June 2010, VC++), which can take minutes. M2's launch fix waits 45 s and then restarts Steam. It must not kill Steam in the middle of an install (Task 2), and it lands before the first real launch (Task 3).
-2. **A 32-bit exe with `renderer: d3dmetal`** would quietly get Wine's own d3d11 and look wrong or slow. `cellar play` refuses it with a sentence naming DXVK (Tasks 1 and 3).
+2. **A 32-bit exe with `renderer: d3dmetal`** would quietly get Wine's own d3d11 and look wrong or slow. `cellar play` refuses it with a sentence naming DXVK (Tasks 1 and 2).
 3. **Steam says "Install" but the files aren't all there** (a download paused at 99 %). The M2 rule, "still downloading", holds for the new games too, because their manifests are read the same way. No new test needed: covered by `SteamLibraryTests`.
 4. **A game that needs a launch option** (Outer Wilds on DXVK). The option must reach the game both through Steam and in a direct start; `-applaunch <appid> <args…>` carries it (Task 4).
 5. **Another game is already running when a new one is asked for.** The M2 rule doesn't restart Steam in that case. The new game still launches, and the setup rule (1) must not take the old game for an installer (Task 2).
