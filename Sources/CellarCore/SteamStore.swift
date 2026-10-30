@@ -300,16 +300,22 @@ public struct SteamStore: Sendable {
                            macSteamRunning: macSteam(), health: health())
     }
 
+    /// Whether Steam's launch of `appid`, asked at `since`, is waiting on the user in the Steam window.
+    public func launchWaitingForYou(appid: Int, since: Date) -> Bool {
+        SteamLogs.launchWaitingForYou(consoleLog: tail("console_log.txt"), appid: appid, since: since)
+    }
+
+    /// The last 256 KB of one of Steam's logs.
+    private func tail(_ file: String) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: steamFolder.appending(path: "logs").appending(path: file)) else { return "" }
+        defer { try? handle.close() }
+        let end = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: end > 262_144 ? end - 262_144 : 0)
+        return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+    }
+
     private func health() -> SteamHealth {
-        let logs = steamFolder.appending(path: "logs")
-        func tail(_ file: String) -> String {
-            guard let handle = try? FileHandle(forReadingFrom: logs.appending(path: file)) else { return "" }
-            defer { try? handle.close() }
-            let end = (try? handle.seekToEnd()) ?? 0
-            try? handle.seek(toOffset: end > 262_144 ? end - 262_144 : 0)
-            return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-        }
-        return SteamLogs.health(connectionLog: tail("connection_log.txt"), webhelperLog: tail("webhelper.txt"),
-                                bootstrapLog: tail("bootstrap_log.txt"), now: Date())
+        SteamLogs.health(connectionLog: tail("connection_log.txt"), webhelperLog: tail("webhelper.txt"),
+                         bootstrapLog: tail("bootstrap_log.txt"), now: Date())
     }
 }

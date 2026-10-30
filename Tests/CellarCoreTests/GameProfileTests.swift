@@ -48,5 +48,7 @@ func findByIdAppidOrName(_ query: String) throws {
     #expect(leapYear.appid == 2951770 && leapYear.exe == "Leap Year.exe" && leapYear.saves == nil)
     // Outer Wilds' physics runs at 60 Hz; 120 needs the game's own PhysicsRate file.
     #expect(GameProfiles.find("outer-wilds", in: profiles)?.fps == 60)
-    #expect(profiles.allSatisfy { $0.renderer == .d3dmetal })
+    // Leap Year (GameMaker) stops at an error dialog on D3DMetal: CheckMultisampleQualityLevels fails (2026-10-30).
+    #expect(leapYear.renderer == .dxvk)
+    #expect(profiles.filter { $0.id != "leap-year" }.allSatisfy { $0.renderer == .d3dmetal })
 }

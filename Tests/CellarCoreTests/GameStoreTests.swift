@@ -17,6 +17,10 @@ struct GameRig {
     let stale: URL
     /// Steam ignores every launch.
     let deaf: URL
+    /// Steam shows a notice before the game ("Grab a controller…", seen 2026-10-30) that nobody answers.
+    let notice: URL
+    /// The same notice, answered after 3 s: then the game starts.
+    let noticeAnswered: URL
     /// Steam runs DXSETUP.exe for 3 s before the game starts, as on a first launch.
     let slowSetup: URL
     /// Steam's DXSETUP.exe never finishes.
@@ -31,6 +35,8 @@ struct GameRig {
         noSignIn = tmp.url.appending(path: "no-sign-in")
         stale = tmp.url.appending(path: "stale")
         deaf = tmp.url.appending(path: "deaf")
+        notice = tmp.url.appending(path: "notice")
+        noticeAnswered = tmp.url.appending(path: "notice-answered")
         slowSetup = tmp.url.appending(path: "slow-setup")
         endlessSetup = tmp.url.appending(path: "endless-setup")
         let steamDir = #""$WINEPREFIX/drive_c/Program Files (x86)/Steam""#
@@ -53,6 +59,14 @@ struct GameRig {
           *-applaunch\\ *)
             if [ -f '\(stale.path)' ] || [ -f '\(deaf.path)' ]; then
               :
+            elif [ -f '\(notice.path)' ]; then
+              mkdir -p \(steamDir)/logs
+              printf '[%s] GameAction [AppID 753640, ActionID 1] : LaunchApp waiting for user response to ShowInterstitials ""\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/console_log.txt
+            elif [ -f '\(noticeAnswered.path)' ]; then
+              mkdir -p \(steamDir)/logs
+              printf '[%s] GameAction [AppID 753640, ActionID 1] : LaunchApp waiting for user response to ShowInterstitials ""\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/console_log.txt
+              (sleep 3; printf '[%s] GameAction [AppID 753640, ActionID 1] : LaunchApp changed task to Completed with ""\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/console_log.txt
+               printf '"OuterWilds.exe","50"\\r\\n' >> '\(tasklist.path)') &
             elif [ -f '\(endlessSetup.path)' ]; then
               printf '"DXSETUP.exe","70"\\r\\n' >> '\(tasklist.path)'
             elif [ -f '\(slowSetup.path)' ]; then
@@ -353,4 +367,26 @@ private var throughSteam: GameProfile {
     guard case .launched = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
     #expect(rig.lines.contains { $0.contains("-shutdown") })
     #expect(rig.lines.filter { $0.contains("steam.exe -no-cef-sandbox |") }.count == 1)
+}
+
+@Test func aNoticeSteamWaitsOnIsWaitedForNotRestarted() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.noticeAnswered)
+    guard case .launched(_, let restarted) = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(!restarted)
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func anUnansweredNoticeEndsInASentenceNotARestart() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.notice)
+    await #expect(throws: GameError.steamWaitingForYou("Outer Wilds")) { try await rig.games.play(throughSteam) }
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func waitingForYouSaysWhatToDo() {
+    #expect(GameError.steamWaitingForYou("Journey").errorDescription
+            == "Steam is waiting for you to answer something in its window before it starts Journey.")
+    #expect(GameError.steamWaitingForYou("Journey").recoverySuggestion
+            == "Answer it in the Steam window (often a notice with an OK button); Journey starts after that.")
 }

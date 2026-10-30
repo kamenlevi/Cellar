@@ -11,6 +11,8 @@ public enum GameError: Error, Equatable {
     case steamIgnoredLaunchBeside(String, other: String)
     /// Steam was still running an installer for the game (DirectX, VC++) when Cellar stopped waiting.
     case steamStillInstalling(String, installer: String)
+    /// Steam stopped before starting the game to show something in its window, and nobody answered it.
+    case steamWaitingForYou(String)
 }
 
 public enum PlayOutcome: Equatable, Sendable {
@@ -101,8 +103,13 @@ public struct GameStore: Sendable {
                              cwd: steam.steamFolder)
         }
         var before = Set((try? await steam.processes()) ?? [])
+        var asked = Date()
         var pid = try ask()
-        if try await gameAppears(exe, besides: before) { return .launched(pid: pid) }
+        if try await gameAppears(exe, appid: profile.appid, besides: before, asked: asked) { return .launched(pid: pid) }
+        // A notice Steam shows first is for Kamen to answer; a restart would only show it again.
+        if steam.launchWaitingForYou(appid: profile.appid, since: asked.addingTimeInterval(-2)) {
+            throw GameError.steamWaitingForYou(profile.name)
+        }
 
         // Never restart Steam, or blame anything, while it is still installing for the game.
         func stillInstalling() async throws {
@@ -118,9 +125,15 @@ public struct GameStore: Sendable {
         _ = try await steam.restart(muted: muted)
         try await waitForSignIn(after: restarted)
         before = Set((try? await steam.processes()) ?? [])
+        asked = Date()
         pid = try ask()
-        if try await gameAppears(exe, besides: before) { return .launched(pid: pid, restartedSteam: true) }
+        if try await gameAppears(exe, appid: profile.appid, besides: before, asked: asked) {
+            return .launched(pid: pid, restartedSteam: true)
+        }
         try await stillInstalling()
+        if steam.launchWaitingForYou(appid: profile.appid, since: asked.addingTimeInterval(-2)) {
+            throw GameError.steamWaitingForYou(profile.name)
+        }
         throw GameError.steamIgnoredLaunch(profile.name)
     }
 
@@ -129,18 +142,20 @@ public struct GameStore: Sendable {
         !SteamStore.wineSystemProcesses.contains(process) && !process.hasPrefix("steam") && process != "gameoverlayui.exe"
     }
 
-    /// Waits `launchWait` for the game. A program that wasn't in `before` is Steam installing something first: while one
-    /// runs, the wait goes on, `launchWait` past its last sighting, up to `setupWait` from the ask.
-    private func gameAppears(_ exe: String, besides before: Set<String>) async throws -> Bool {
+    /// Waits `launchWait` for the game. A program that wasn't in `before` is Steam installing something first, and a
+    /// notice in Steam's window waits on Kamen: while either lasts, the wait goes on, `launchWait` past its last
+    /// sighting, up to `setupWait` from the ask.
+    private func gameAppears(_ exe: String, appid: Int, besides before: Set<String>, asked: Date) async throws -> Bool {
         let clock = ContinuousClock()
-        let asked = clock.now
-        var deadline = asked + launchWait
+        let start = clock.now
+        var deadline = start + launchWait
         repeat {
             try await Task.sleep(for: pollInterval)
             guard let running = try? await steam.processes() else { continue }
             if running.contains(exe) { return true }
-            if running.contains(where: { Self.isProgram($0) && !before.contains($0) }) {
-                deadline = min(max(deadline, clock.now + launchWait), asked + setupWait)
+            if running.contains(where: { Self.isProgram($0) && !before.contains($0) })
+                || steam.launchWaitingForYou(appid: appid, since: asked.addingTimeInterval(-2)) {
+                deadline = min(max(deadline, clock.now + launchWait), start + setupWait)
             }
         } while clock.now < deadline
         return false

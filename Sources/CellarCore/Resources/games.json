@@ -46,6 +46,6 @@
     "name": "Leap Year",
     "appid": 2951770,
     "exe": "Leap Year.exe",
-    "renderer": "d3dmetal"
+    "renderer": "dxvk"
   }
 ]

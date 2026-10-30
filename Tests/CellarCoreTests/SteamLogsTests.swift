@@ -74,3 +74,24 @@ private func crlf(_ s: String) -> String { s.replacingOccurrences(of: "\n", with
     #expect(SteamLogs.lastUpdateCheck(bootstrapLog: crlf(F.bootstrap)) == F.local("2026-08-14 12:13:52"))
     #expect(SteamLogs.webhelperLaunches(webhelperLog: crlf(F.webhelperCrashLoop), since: .distantPast) == 6)
 }
+
+// Steam's console log, 2026-10-30: Outer Wilds waited on a notice; Chants of Sennaar started.
+private let launches = """
+[2026-10-30 20:21:44] GameAction [AppID 1931770, ActionID 2] : LaunchApp changed task to WaitingGameWindow with ""
+[2026-10-30 20:21:44] GameAction [AppID 1931770, ActionID 2] : LaunchApp changed task to Completed with ""
+[2026-10-30 20:29:41] GameAction [AppID 753640, ActionID 2] : LaunchApp changed task to ShowInterstitials with ""
+[2026-10-30 20:29:41] GameAction [AppID 753640, ActionID 2] : LaunchApp waiting for user response to ShowInterstitials ""
+
+"""
+
+@Test func aLaunchWaitingOnANoticeIsSeen() {
+    #expect(SteamLogs.launchWaitingForYou(consoleLog: crlf(launches), appid: 753640, since: F.local("2026-10-30 20:29:00")))
+}
+
+@Test func aLaunchThatWentAheadIsNotWaiting() {
+    #expect(!SteamLogs.launchWaitingForYou(consoleLog: launches, appid: 1931770, since: F.local("2026-10-30 20:21:00")))
+}
+
+@Test func aNoticeFromBeforeTheAskDoesNotCount() {
+    #expect(!SteamLogs.launchWaitingForYou(consoleLog: launches, appid: 753640, since: F.local("2026-10-30 20:30:00")))
+}

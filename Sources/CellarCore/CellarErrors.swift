@@ -110,6 +110,7 @@ extension GameError: LocalizedError {
             "Steam didn't start \(name). Cellar didn't restart Steam, because \(other) is running beside it."
         case .steamStillInstalling(let name, let installer):
             "Steam is still installing something \(name) needs (\(installer)), so the game hasn't started yet."
+        case .steamWaitingForYou(let name): "Steam is waiting for you to answer something in its window before it starts \(name)."
         }
     }
 
@@ -122,6 +123,7 @@ extension GameError: LocalizedError {
         case .steamIgnoredLaunch: "Try Play in the Steam window (cellar steam). If that does nothing too, tell Claude."
         case .steamIgnoredLaunchBeside(_, let other): "Quit \(other), then try again."
         case .steamStillInstalling: "Let it finish (it may show a window of its own), then try again."
+        case .steamWaitingForYou(let name): "Answer it in the Steam window (often a notice with an OK button); \(name) starts after that."
         }
     }
 }

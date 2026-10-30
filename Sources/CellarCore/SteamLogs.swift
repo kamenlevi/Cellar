@@ -51,6 +51,17 @@ public enum SteamLogs {
         return signedOut.map { replaced ? .signedInElsewhere(since: $0) : .signedOut(since: $0) } ?? .unknown
     }
 
+    /// Whether Steam's launch of `appid`, asked at `since`, stopped to wait on the user: a notice in the Steam window
+    /// ("Grab a controller…", 2026-10-30), shown before the game starts. Read from console_log.txt.
+    public static func launchWaitingForYou(consoleLog: String, appid: Int, since: Date) -> Bool {
+        for line in consoleLog.split(whereSeparator: \.isNewline).reversed()
+        where line.contains("GameAction [AppID \(appid),") {
+            guard let time = timestamp(line), time >= since else { return false }
+            return line.contains("waiting for user response")
+        }
+        return false
+    }
+
     public static func webhelperLaunches(webhelperLog: String, since: Date) -> Int {
         webhelperLog.split(whereSeparator: \.isNewline).count { line in
             guard line.contains("Startup - webhelper launched pid:"), let time = timestamp(line) else { return false }
