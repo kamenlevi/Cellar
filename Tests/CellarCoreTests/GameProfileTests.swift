@@ -50,5 +50,7 @@ func findByIdAppidOrName(_ query: String) throws {
     #expect(GameProfiles.find("outer-wilds", in: profiles)?.fps == 60)
     // Leap Year (GameMaker) stops at an error dialog on D3DMetal: CheckMultisampleQualityLevels fails (2026-10-30).
     #expect(leapYear.renderer == .dxvk)
+    // GameMaker runs a fixed 60 frames a second (the check measured 60.0 on a 120 Hz screen, 2026-10-30).
+    #expect(leapYear.fps == 60)
     #expect(profiles.filter { $0.id != "leap-year" }.allSatisfy { $0.renderer == .d3dmetal })
 }
