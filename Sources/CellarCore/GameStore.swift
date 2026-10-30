@@ -24,22 +24,27 @@ public struct GameStore: Sendable {
     let signInWait: Duration
     /// How long Steam may take to start the game after being asked.
     let launchWait: Duration
+    /// How long a first launch may spend in Steam's installers (DirectX, VC++) before the game.
+    let setupWait: Duration
     let pollInterval: Duration
 
     public init(paths: CellarPaths, steam: SteamStore, signInWait: Duration = .seconds(90),
-                launchWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
+                launchWait: Duration = .seconds(45), setupWait: Duration = .seconds(600), pollInterval: Duration = .seconds(2)) {
         self.paths = paths
         self.steam = steam
         self.signInWait = signInWait
         self.launchWait = launchWait
+        self.setupWait = setupWait
         self.pollInterval = pollInterval
     }
 
     /// Steam launches the game when it can, so Steam Cloud syncs its saves before and after. That needs a Steam that
     /// Cellar started with the game's renderer, and no extra variables (a check's HUD): otherwise the game starts
     /// directly beside Steam, without cloud sync. `muted` starts the game with no sound driver at all, so it can't make
-    /// a sound on this Mac; through Steam only when Steam itself was started muted.
-    public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:], muted: Bool = false) async throws -> PlayOutcome {
+    /// a sound on this Mac; through Steam only when Steam itself was started muted. `starting` is called once every check
+    /// has passed, right before Wine starts anything.
+    public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:], muted: Bool = false,
+                     starting: @Sendable () -> Void = {}) async throws -> PlayOutcome {
         let folder: URL
         switch SteamLibrary.state(appid: profile.appid, steamFolder: steam.steamFolder) {
         case .notInstalled: throw GameError.notInstalled(profile.name)
@@ -48,6 +53,10 @@ public struct GameStore: Sendable {
         }
         let exe = folder.appending(path: profile.exe)
         guard FileManager.default.fileExists(atPath: exe.path) else { throw GameError.notInstalled(profile.name) }
+        // D3DMetal ships 64-bit DLLs only. An exe Cellar can't read (a launcher stub) is not refused.
+        if profile.renderer == .d3dmetal, let facts = try? ExeFacts.read(exe), !facts.is64Bit {
+            throw RendererError.d3dmetalNeeds64Bit(profile.name)
+        }
 
         // Work out the renderer first, so a missing D3DMetal is reported before anything starts.
         let runner = try steam.bottles.runner(for: steam.name, mode: .interactive)
@@ -59,6 +68,7 @@ public struct GameStore: Sendable {
         env["ROSETTA_ADVERTISE_AVX"] = "1"
         env.merge(extraEnvironment) { $1 }
         if muted { env["WINEDLLOVERRIDES", default: ""] += ";\(SteamStore.noSound)" }
+        starting()
 
         let running = (try? await steam.processes()) ?? []
         if running.contains(exe.lastPathComponent.lowercased()) {
@@ -87,27 +97,40 @@ public struct GameStore: Sendable {
             try runner.spawn([steam.steamExe.path] + SteamStore.launchFlags + ["-applaunch", String(profile.appid)],
                              cwd: steam.steamFolder)
         }
+        var before = Set((try? await steam.processes()) ?? [])
         var pid = try ask()
-        if try await gameAppears(exe) { return .launched(pid: pid) }
+        if try await gameAppears(exe, besides: before) { return .launched(pid: pid) }
 
-        let others = ((try? await steam.processes()) ?? []).filter {
-            !SteamStore.wineSystemProcesses.contains($0) && !$0.hasPrefix("steam") && $0 != "gameoverlayui.exe"
+        if let other = ((try? await steam.processes()) ?? []).first(where: Self.isProgram) {
+            throw GameError.steamIgnoredLaunchBeside(profile.name, other: other)
         }
-        if let other = others.first { throw GameError.steamIgnoredLaunchBeside(profile.name, other: other) }
         let restarted = Date()
         _ = try await steam.restart(muted: muted)
         try await waitForSignIn(after: restarted)
+        before = Set((try? await steam.processes()) ?? [])
         pid = try ask()
-        if try await gameAppears(exe) { return .launched(pid: pid, restartedSteam: true) }
+        if try await gameAppears(exe, besides: before) { return .launched(pid: pid, restartedSteam: true) }
         throw GameError.steamIgnoredLaunch(profile.name)
     }
 
-    private func gameAppears(_ exe: String) async throws -> Bool {
+    /// A program in Steam's bottle that is neither Wine's nor Steam's own: a game, or an installer Steam runs.
+    static func isProgram(_ process: String) -> Bool {
+        !SteamStore.wineSystemProcesses.contains(process) && !process.hasPrefix("steam") && process != "gameoverlayui.exe"
+    }
+
+    /// Waits `launchWait` for the game. A program that wasn't in `before` is Steam installing something first: while one
+    /// runs, the wait goes on, `launchWait` past its last sighting, up to `setupWait` from the ask.
+    private func gameAppears(_ exe: String, besides before: Set<String>) async throws -> Bool {
         let clock = ContinuousClock()
-        let deadline = clock.now + launchWait
+        let asked = clock.now
+        var deadline = asked + launchWait
         repeat {
             try await Task.sleep(for: pollInterval)
-            if let running = try? await steam.processes(), running.contains(exe) { return true }
+            guard let running = try? await steam.processes() else { continue }
+            if running.contains(exe) { return true }
+            if running.contains(where: { Self.isProgram($0) && !before.contains($0) }) {
+                deadline = min(max(deadline, clock.now + launchWait), asked + setupWait)
+            }
         } while clock.now < deadline
         return false
     }

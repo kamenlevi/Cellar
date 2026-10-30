@@ -20,6 +20,8 @@ public enum Renderer: String, Codable, Sendable {
 
 public enum RendererError: Error, Equatable {
     case d3dmetalNotImported
+    /// The game's exe is 32-bit, and D3DMetal only runs 64-bit programs.
+    case d3dmetalNeeds64Bit(String)
 }
 
 public enum RendererSetup {

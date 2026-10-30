@@ -81,8 +81,19 @@ extension SteamError: LocalizedError {
 }
 
 extension RendererError: LocalizedError {
-    public var errorDescription: String? { "This game needs Apple's D3DMetal, which isn't imported yet." }
-    public var recoverySuggestion: String? { "Run: cellar d3dmetal import ~/Downloads/<Evaluation environment for Windows games>.dmg" }
+    public var errorDescription: String? {
+        switch self {
+        case .d3dmetalNotImported: "This game needs Apple's D3DMetal, which isn't imported yet."
+        case .d3dmetalNeeds64Bit(let name): "\(name) is a 32-bit program, and D3DMetal only runs 64-bit ones."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .d3dmetalNotImported: "Run: cellar d3dmetal import ~/Downloads/<Evaluation environment for Windows games>.dmg"
+        case .d3dmetalNeeds64Bit: "Set its renderer to dxvk in games.json."
+        }
+    }
 }
 
 extension GameError: LocalizedError {
