@@ -12,6 +12,7 @@ private struct SteamRig {
     let hang: URL
     let noWindow: URL
     let noWindowOnce: URL
+    let steamOverrides: URL
     let bottles: BottleStore
     let engines: EngineStore
 
@@ -23,6 +24,7 @@ private struct SteamRig {
         hang = tmp.url.appending(path: "hang")
         noWindow = tmp.url.appending(path: "no-window")
         noWindowOnce = tmp.url.appending(path: "no-window-once")
+        steamOverrides = tmp.url.appending(path: "steam-overrides.txt")
         let install = installerInstalls
             ? #"mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe""#
             : "true"
@@ -37,6 +39,7 @@ private struct SteamRig {
         [ "$2" = "-shutdown" ] && rm -f '\(tasklist.path)'
         case "$*" in *-no-cef-sandbox*)
           rm -f '\(hang.path)'
+          printf "%s\\n" "$WINEDLLOVERRIDES" >> '\(steamOverrides.path)'
           if [ -f '\(noWindow.path)' ]; then printf '"steam.exe","32"\r\n' > '\(tasklist.path)'
           elif [ -f '\(noWindowOnce.path)' ]; then rm -f '\(noWindowOnce.path)'; printf '"steam.exe","32"\r\n' > '\(tasklist.path)'
           else printf '"steam.exe","32"\r\n"steamwebhelper.exe","40"\r\n' > '\(tasklist.path)'; fi ;;
@@ -158,6 +161,16 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     #expect(!rig.lines(rig.calls).contains { $0.contains("-silent") })
     // The check ran headless (no display driver); Steam must not join that session.
     #expect(rig.lines(rig.serverCalls) == ["-k", "-w"])
+}
+
+@Test func gamesSteamLaunchesNeverLoadSteamsOverlay() async throws {
+    // The overlay's hook took Chants of Sennaar's keyboard away mid-game (2026-10-31); started without it, keys worked.
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    _ = try await steam.start(muted: true)
+    let overrides = rig.lines(rig.steamOverrides).last ?? ""
+    #expect(overrides.contains("gameoverlayrenderer64=d"))
+    #expect(overrides.contains(SteamStore.noSound))
 }
 
 @Test func startWhenSteamRunsBringsItForward() async throws {

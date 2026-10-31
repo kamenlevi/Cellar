@@ -238,10 +238,15 @@ public struct SteamStore: Sendable {
             env["ROSETTA_ADVERTISE_AVX"] = "1"
             renderer = .d3dmetal
         }
+        env["WINEDLLOVERRIDES", default: ""] += ";\(Self.noOverlay)"
         if muted { env["WINEDLLOVERRIDES", default: ""] += ";\(Self.noSound)" }
         try runner.spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder, environmentOverrides: env)
         try Data((renderer.rawValue + (muted ? " muted" : "")).utf8).write(to: rendererFile)
     }
+
+    /// Keeps Steam's overlay out of the (64-bit) games Steam launches: under Wine its hook can take the game's keyboard
+    /// away mid-game (Chants of Sennaar, 2026-10-31). Steam itself is 32-bit and keeps its own DLL.
+    static let noOverlay = "gameoverlayrenderer64=d"
 
     /// The DLL override that leaves a program with no sound driver at all.
     static let noSound = "winecoreaudio.drv=d"
