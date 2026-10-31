@@ -103,31 +103,29 @@ done < <(sed -n 's/^#define SONAME_LIB[A-Z0-9_]* "\(.*\)"$/\1/p' include/config.
 
 # Wine's media parts (winegstreamer, winedmo) link GStreamer, GLib and FFmpeg at build time, by Homebrew's paths. At run
 # time they must load the template's copies, as engine c2's do: by @rpath, found through DYLD_FALLBACK_LIBRARY_PATH
-# (WineEnvironment). Each such library must be in the template, and export every symbol Wine takes from it.
+# (WineEnvironment). Each such library must be in the template; then every relinked file is loaded for real (all
+# symbols bound at once) with only the template's libraries to find, which is what happens on the player's Mac.
 template_libs="$frameworks/GStreamer.framework/Versions/1.0/lib"
-# The symbols a Mach-O file takes from a library. nm names the library by a shortened leaf ("libgstreamer-1",
-# "libavcodec.61"), so it is matched as a prefix of the library's file name.
-imports_from() {
-    nm -m "$1" | sed -n 's/.*(undefined) .*external \([^ ]*\) (from \(.*\))$/\1 \2/p' \
-        | awk -v lib="$2" 'index(lib, $2) == 1 && $2 !~ /^@/ { print $1 }' | sort -u
-}
+relinked=()
 while read -r macho; do
-    relinked=0
+    changed=0
     while read -r dep; do
         name=$(basename "$dep")
-        shipped=""
-        for d in "$frameworks" "$template_libs"; do [ -e "$d/$name" ] && shipped="$d/$name" && break; done
-        [ -n "$shipped" ] || { echo "${macho#$out/} links Homebrew's $name, which the template doesn't ship"; missing=1; continue; }
-        needed=$(imports_from "$macho" "$name")
-        [ -n "$needed" ] || { echo "${macho#$out/}: can't read what it takes from $name"; missing=1; continue; }
-        lacking=$(comm -23 <(echo "$needed") <(nm -gUj "$shipped" | sort -u))
-        [ -z "$lacking" ] || { echo "${macho#$out/} needs from $name what the template's copy lacks:"; echo "$lacking" | head -20; missing=1; }
+        [ -e "$frameworks/$name" ] || [ -e "$template_libs/$name" ] \
+            || { echo "${macho#$out/} links Homebrew's $name, which the template doesn't ship"; missing=1; continue; }
         install_name_tool -change "$dep" "@rpath/$name" "$macho" 2>/dev/null
-        relinked=1
+        changed=1
     done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}' | grep -E '^(/usr/local/|/opt/homebrew/)' || true)
-    [ $relinked = 0 ] || codesign -f -s - "$macho" 2>/dev/null
+    [ $changed = 0 ] || { codesign -f -s - "$macho" 2>/dev/null; relinked+=("$macho"); }
 done < <(find "$out/wine" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
 [ $missing = 0 ] || exit 1
+if [ ${#relinked[@]} -gt 0 ]; then
+    printf '#include <dlfcn.h>\n#include <stdio.h>\nint main(int c, char **v) { int bad = 0;\n for (int i = 1; i < c; i++) if (!dlopen(v[i], RTLD_NOW | RTLD_LOCAL)) { printf("%%s\\n", dlerror()); bad = 1; }\n return bad; }\n' > "$work/loadcheck.c"
+    clang -o "$work/loadcheck" "$work/loadcheck.c"
+    echo "load check: ${relinked[*]#$out/}"
+    DYLD_FALLBACK_LIBRARY_PATH="$frameworks:$template_libs:/usr/lib" "$work/loadcheck" "${relinked[@]}" \
+        || { echo "a relinked part doesn't load with the template's libraries"; exit 1; }
+fi
 
 # --- Assemble (the same layout as package-engine.sh's) ----------------------------------------------------------
 mkdir -p "$out/Frameworks" "$out/renderer" "$out/wine/share/wine/mono" "$out/wine/share/wine/gecko"
