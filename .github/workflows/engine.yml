@@ -26,6 +26,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/build-engine.sh "$RUNNER_TEMP/engine"
+      - name: Compiler cache hits
+        if: always()
+        run: ccache -s
       - uses: actions/cache/save@v4
         if: always()   # a failed build's compiler cache still speeds up the next one
         with:

@@ -61,7 +61,12 @@ export PKG_CONFIG_PATH="$brew_prefix/lib/pkgconfig:$brew_prefix/opt/gnutls/lib/p
 export CPPFLAGS="-I$brew_prefix/include"
 export LDFLAGS="-L$brew_prefix/lib"
 export MACOSX_DEPLOYMENT_TARGET=11.0
-command -v ccache >/dev/null && export CC="ccache clang" CXX="ccache clang++"
+# ccache: most of Wine is its Windows-side code (~7,600 of ~8,000 compiles), so the mingw compilers go through it too.
+cross=()
+if command -v ccache >/dev/null; then
+    export CC="ccache clang" CXX="ccache clang++" CCACHE_MAXSIZE=8G
+    cross=(i386_CC="ccache i686-w64-mingw32-gcc" x86_64_CC="ccache x86_64-w64-mingw32-gcc")
+fi
 
 out="$work/out/$ENGINE_ID"
 rm -rf "$out" "$work/build" && mkdir -p "$out" "$work/build/include"
@@ -76,6 +81,7 @@ cd "$work/build"
     --without-x --without-oss --without-alsa --without-pulse --without-cups --without-sane --without-gphoto \
     --without-krb5 --without-netapi --without-pcap --without-v4l2 --without-wayland --without-dbus \
     --disable-tests \
+    ${cross[@]+"${cross[@]}"} \
     ac_cv_lib_soname_odbc=   # as in engine c2: Wine asks for plain libodbc.dylib, and works without it
 make -j"$jobs"
 make install-lib
