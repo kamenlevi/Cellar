@@ -67,6 +67,9 @@ extension SteamError: LocalizedError {
         case .badInstaller(let reason): "The Steam installer download wasn't valid (\(reason)), so nothing was run."
         case .installFailed(let reason): "Steam's installer finished but Steam.exe isn't there (\(reason))."
         case .noWindow: "Steam started but its window never appeared, even after one automatic restart."
+        case .signedInElsewhere: "Steam is signed out, because your account signed in on Steam for Mac."
+        case .signedOutWhileGameRuns(let game):
+            "Steam is signed out, because your account signed in somewhere else, and \(game) is still running in Steam's bottle."
         }
     }
 
@@ -76,13 +79,26 @@ extension SteamError: LocalizedError {
         case .badInstaller: "Try again: cellar steam install"
         case .installFailed: "See the log: ~/Library/Logs/Cellar/Steam.log"
         case .noWindow: "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log"
+        case .signedInElsewhere: "Quit Steam for Mac (Steam ▸ Quit Steam), then run: cellar steam"
+        case .signedOutWhileGameRuns(let game): "Quit \(game) from its own menu, then run: cellar steam"
         }
     }
 }
 
 extension RendererError: LocalizedError {
-    public var errorDescription: String? { "This game needs Apple's D3DMetal, which isn't imported yet." }
-    public var recoverySuggestion: String? { "Run: cellar d3dmetal import ~/Downloads/<Evaluation environment for Windows games>.dmg" }
+    public var errorDescription: String? {
+        switch self {
+        case .d3dmetalNotImported: "This game needs Apple's D3DMetal, which isn't imported yet."
+        case .d3dmetalNeeds64Bit(let name): "\(name) is a 32-bit program, and D3DMetal only runs 64-bit ones."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .d3dmetalNotImported: "Run: cellar d3dmetal import ~/Downloads/<Evaluation environment for Windows games>.dmg"
+        case .d3dmetalNeeds64Bit: "Set its renderer to dxvk in games.json."
+        }
+    }
 }
 
 extension GameError: LocalizedError {
@@ -95,6 +111,9 @@ extension GameError: LocalizedError {
         case .steamIgnoredLaunch(let name): "Steam didn't start \(name), even after Cellar restarted it."
         case .steamIgnoredLaunchBeside(let name, let other):
             "Steam didn't start \(name). Cellar didn't restart Steam, because \(other) is running beside it."
+        case .steamStillInstalling(let name, let installer):
+            "Steam is still installing something \(name) needs (\(installer)), so the game hasn't started yet."
+        case .steamWaitingForYou(let name): "Steam is waiting for you to answer something in its window before it starts \(name)."
         }
     }
 
@@ -106,6 +125,8 @@ extension GameError: LocalizedError {
         case .steamNotSignedIn: "Sign in in the Steam window (cellar steam), then try again."
         case .steamIgnoredLaunch: "Try Play in the Steam window (cellar steam). If that does nothing too, tell Claude."
         case .steamIgnoredLaunchBeside(_, let other): "Quit \(other), then try again."
+        case .steamStillInstalling: "Let it finish (it may show a window of its own), then try again."
+        case .steamWaitingForYou(let name): "Answer it in the Steam window (often a notice with an OK button); \(name) starts after that."
         }
     }
 }

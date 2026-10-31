@@ -3,6 +3,9 @@ import Foundation
 public enum SignInState: Equatable, Sendable {
     case signedIn(since: Date)
     case signedOut(since: Date)
+    /// "Session Replaced": the account signed in somewhere else (Steam for Mac, another computer), so Steam signed this
+    /// one out and won't reconnect by itself. Steam itself only says "no internet connection".
+    case signedInElsewhere(since: Date)
     case unknown
 }
 
@@ -32,12 +35,33 @@ public enum SteamLogs {
     }
 
     public static func signIn(connectionLog: String) -> SignInState {
+        var signedOut: Date?
+        var replaced = false
         for line in connectionLog.split(whereSeparator: \.isNewline).reversed() {
             guard let time = timestamp(line) else { continue }
-            if line.contains("[Logged On,") { return .signedIn(since: time) }
-            if line.contains("[Logged Off,") { return .signedOut(since: time) }
+            if signedOut == nil {
+                if line.contains("[Logged On,") { return .signedIn(since: time) }
+                guard line.contains("[Logged Off,") else { continue }
+                signedOut = time
+            }
+            // Back through this sign-out, to the session it ended. "LogOn() called" starts a new attempt (a restarted
+            // Steam still connecting), so a replacement before it belongs to the old session.
+            if line.contains("LogOn() called") { break }
+            if line.contains("Session Replaced") { replaced = true }
+            if line.contains("[Logged On,") { break }
         }
-        return .unknown
+        return signedOut.map { replaced ? .signedInElsewhere(since: $0) : .signedOut(since: $0) } ?? .unknown
+    }
+
+    /// Whether Steam's launch of `appid`, asked at `since`, stopped to wait on the user: a notice in the Steam window
+    /// ("Grab a controller…", 2026-10-30), shown before the game starts. Read from console_log.txt.
+    public static func launchWaitingForYou(consoleLog: String, appid: Int, since: Date) -> Bool {
+        for line in consoleLog.split(whereSeparator: \.isNewline).reversed()
+        where line.contains("GameAction [AppID \(appid),") {
+            guard let time = timestamp(line), time >= since else { return false }
+            return line.contains("waiting for user response")
+        }
+        return false
     }
 
     public static func webhelperLaunches(webhelperLog: String, since: Date) -> Int {

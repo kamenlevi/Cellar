@@ -189,7 +189,8 @@ struct D3DMetalCommand: AsyncParsableCommand {
 func steamStore() -> SteamStore {
     let paths = CellarPaths()
     let engines = EngineStore(paths: paths)
-    return SteamStore(paths: paths, bottles: BottleStore(paths: paths, engines: engines), engines: engines)
+    return SteamStore(paths: paths, bottles: BottleStore(paths: paths, engines: engines), engines: engines,
+                      announce: { print($0) })
 }
 
 struct SteamCommand: AsyncParsableCommand {
@@ -206,6 +207,8 @@ struct SteamCommand: AsyncParsableCommand {
         case .broughtForward: print("Steam is already running; bringing its window forward.")
         case .clearedStaleStateThenStarted: print("Cleared a stuck Steam session, then started Steam.")
         case .restartedAfterNoWindow: print("Steam came up without its window, so Cellar restarted it once. Its window should be up now.")
+        case .signedBackIn:
+            print("Steam had been signed out, because your account signed in somewhere else (Steam for Mac or another computer). Cellar restarted it, and it signs back in by itself.")
         }
     }
 
@@ -272,8 +275,8 @@ struct Play: AsyncParsableCommand {
         guard let profile = GameProfiles.find(game, in: try GameProfiles.bundled()) else { throw GameError.unknownGame(game) }
         let paths = CellarPaths()
         let games = GameStore(paths: paths, steam: steamStore())
-        print("Starting \(profile.name) (\(profile.renderer.displayName))…")
-        switch try await games.play(profile, muted: mute) {
+        let starting = "Starting \(profile.name) (\(profile.renderer.displayName))…"
+        switch try await games.play(profile, muted: mute, starting: { print(starting) }) {
         case .launched(_, let restartedSteam):
             if restartedSteam { print("Steam didn't respond to the launch, so Cellar restarted it; \(profile.name) is starting now.") }
         case .broughtForward: print("\(profile.name) is already running; bringing it forward.")

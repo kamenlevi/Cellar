@@ -16,6 +16,25 @@ enum SteamLogFixtures {
 
     """
 
+    /// Kamen opened Steam for Mac at 18:58 on 2026-10-30: Steam signed Cellar's Steam out and it never reconnected.
+    static let connectionReplaced = """
+    [2026-10-30 16:23:28] [Logged On, 4, 7] [U:1:123456789] RecvMsgClientLogOnResponse() : processing complete
+    [2026-10-30 18:58:13] [Logged On, 4, 7] [U:1:123456789] RecvMsgClientLoggedOff('Session Replaced')
+    [2026-10-30 18:58:13] [Logged On, 4, 7] [U:1:123456789] AsyncDisconnect( bDontWaitOnTCPShutdown: false )
+    [2026-10-30 18:58:13] [Logged Off, 4, 0] [U:1:123456789] ConnectionDisconnected('Disconnected By Remote Host') : 'Session Replaced' (146.66.155.85:27018, WebSocket)
+    [2026-10-30 18:58:13] [Logged Off, 4, 0] [U:1:123456789] ConnectionDisconnected() not auto reconnecting due to Session Replaced
+    [2026-10-30 18:58:13] [Logged Off, 0, 0] [U:1:123456789] Sending SteamServersDisconnected_t because we were logged on
+    [2026-10-30 19:23:29] CClientJobGetClientUpdateHosts: cached version not expired
+
+    """
+
+    /// `cellar steam restart` at 19:38 the same day: the saved login signed straight back in.
+    static let connectionSignedBackIn = """
+    [2026-10-30 19:38:22] [Logged Off, 4, 0] [U:1:123456789] LogOn() called; not connected yet, scheduling connection. Schedule init returned 1
+    [2026-10-30 19:38:23] [Logged On, 4, 7] [U:1:123456789] RecvMsgClientLogOnResponse() : processing complete
+
+    """
+
     static func webhelperLaunch(_ time: String, pid: Int) -> String {
         #"[2026-08-11 \#(time)] Startup - webhelper launched pid: \#(pid) commandline: "C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe" -nocrashdialog -lang=en_US"#
     }

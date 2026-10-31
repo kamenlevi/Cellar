@@ -32,5 +32,25 @@ func findByIdAppidOrName(_ query: String) throws {
 @Test func rainWorldNeeds60fpsAndOthersTheDisplay() throws {
     let profiles = try GameProfiles.bundled()
     #expect(GameProfiles.find("rain-world", in: profiles)?.fps == 60)
-    #expect(GameProfiles.find("outer-wilds", in: profiles)?.fps == nil)
+    #expect(GameProfiles.find("animal-well", in: profiles)?.fps == nil)
+}
+
+@Test func everyTargetGameHasAProfile() throws {
+    let profiles = try GameProfiles.bundled()
+    let journey = try #require(GameProfiles.find("journey", in: profiles))
+    #expect(journey.appid == 638230 && journey.exe == "Journey.exe")
+    #expect(journey.saves == "AppData/Local/Annapurna Interactive/Journey")
+    #expect(GameProfiles.find("638230", in: profiles) == journey)
+    let chants = try #require(GameProfiles.find("chants of sennaar", in: profiles))
+    #expect(chants.id == "chants-of-sennaar" && chants.appid == 1931770 && chants.exe == "Chants Of Sennaar.exe")
+    #expect(chants.saves == "AppData/LocalLow/Rundisc/Chants Of Sennaar")
+    let leapYear = try #require(GameProfiles.find("leap-year", in: profiles))
+    #expect(leapYear.appid == 2951770 && leapYear.exe == "Leap Year.exe" && leapYear.saves == nil)
+    // Outer Wilds' physics runs at 60 Hz; 120 needs the game's own PhysicsRate file.
+    #expect(GameProfiles.find("outer-wilds", in: profiles)?.fps == 60)
+    // Leap Year (GameMaker) stops at an error dialog on D3DMetal: CheckMultisampleQualityLevels fails (2026-10-30).
+    #expect(leapYear.renderer == .dxvk)
+    // GameMaker runs a fixed 60 frames a second (the check measured 60.0 on a 120 Hz screen, 2026-10-30).
+    #expect(leapYear.fps == 60)
+    #expect(profiles.filter { $0.id != "leap-year" }.allSatisfy { $0.renderer == .d3dmetal })
 }

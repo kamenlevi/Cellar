@@ -9,6 +9,10 @@ public enum GameError: Error, Equatable {
     case steamIgnoredLaunch(String)
     /// Steam ignored the launch, and Cellar left it running because `other` runs in its bottle too.
     case steamIgnoredLaunchBeside(String, other: String)
+    /// Steam was still running an installer for the game (DirectX, VC++) when Cellar stopped waiting.
+    case steamStillInstalling(String, installer: String)
+    /// Steam stopped before starting the game to show something in its window, and nobody answered it.
+    case steamWaitingForYou(String)
 }
 
 public enum PlayOutcome: Equatable, Sendable {
@@ -24,22 +28,27 @@ public struct GameStore: Sendable {
     let signInWait: Duration
     /// How long Steam may take to start the game after being asked.
     let launchWait: Duration
+    /// How long a first launch may spend in Steam's installers (DirectX, VC++) before the game.
+    let setupWait: Duration
     let pollInterval: Duration
 
     public init(paths: CellarPaths, steam: SteamStore, signInWait: Duration = .seconds(90),
-                launchWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
+                launchWait: Duration = .seconds(45), setupWait: Duration = .seconds(600), pollInterval: Duration = .seconds(2)) {
         self.paths = paths
         self.steam = steam
         self.signInWait = signInWait
         self.launchWait = launchWait
+        self.setupWait = setupWait
         self.pollInterval = pollInterval
     }
 
     /// Steam launches the game when it can, so Steam Cloud syncs its saves before and after. That needs a Steam that
     /// Cellar started with the game's renderer, and no extra variables (a check's HUD): otherwise the game starts
     /// directly beside Steam, without cloud sync. `muted` starts the game with no sound driver at all, so it can't make
-    /// a sound on this Mac; through Steam only when Steam itself was started muted.
-    public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:], muted: Bool = false) async throws -> PlayOutcome {
+    /// a sound on this Mac; through Steam only when Steam itself was started muted. `starting` is called once every check
+    /// has passed, right before Wine starts anything.
+    public func play(_ profile: GameProfile, extraEnvironment: [String: String] = [:], muted: Bool = false,
+                     starting: @Sendable () -> Void = {}) async throws -> PlayOutcome {
         let folder: URL
         switch SteamLibrary.state(appid: profile.appid, steamFolder: steam.steamFolder) {
         case .notInstalled: throw GameError.notInstalled(profile.name)
@@ -48,6 +57,10 @@ public struct GameStore: Sendable {
         }
         let exe = folder.appending(path: profile.exe)
         guard FileManager.default.fileExists(atPath: exe.path) else { throw GameError.notInstalled(profile.name) }
+        // D3DMetal ships 64-bit DLLs only. An exe Cellar can't read (a launcher stub) is not refused.
+        if profile.renderer == .d3dmetal, let facts = try? ExeFacts.read(exe), !facts.is64Bit {
+            throw RendererError.d3dmetalNeeds64Bit(profile.name)
+        }
 
         // Work out the renderer first, so a missing D3DMetal is reported before anything starts.
         let runner = try steam.bottles.runner(for: steam.name, mode: .interactive)
@@ -59,6 +72,7 @@ public struct GameStore: Sendable {
         env["ROSETTA_ADVERTISE_AVX"] = "1"
         env.merge(extraEnvironment) { $1 }
         if muted { env["WINEDLLOVERRIDES", default: ""] += ";\(SteamStore.noSound)" }
+        starting()
 
         let running = (try? await steam.processes()) ?? []
         if running.contains(exe.lastPathComponent.lowercased()) {
@@ -68,8 +82,9 @@ public struct GameStore: Sendable {
 
         let started = Date()
         let steamUp = running.contains("steam.exe") && running.contains("steamwebhelper.exe")
-        if !steamUp { _ = try await steam.start() }
-        try await waitForSignIn(after: steamUp ? nil : started)
+        let signedIn = steamUp && !steam.signedInElsewhere
+        if !signedIn { _ = try await steam.start() }
+        try await waitForSignIn(after: signedIn ? nil : started)
 
         if profile.launch == .throughSteam && extraEnvironment.isEmpty && steam.gameRenderer == profile.renderer
             && steam.gamesMuted == muted {
@@ -87,27 +102,61 @@ public struct GameStore: Sendable {
             try runner.spawn([steam.steamExe.path] + SteamStore.launchFlags + ["-applaunch", String(profile.appid)],
                              cwd: steam.steamFolder)
         }
+        var before = Set((try? await steam.processes()) ?? [])
+        var asked = Date()
         var pid = try ask()
-        if try await gameAppears(exe) { return .launched(pid: pid) }
-
-        let others = ((try? await steam.processes()) ?? []).filter {
-            !SteamStore.wineSystemProcesses.contains($0) && !$0.hasPrefix("steam") && $0 != "gameoverlayui.exe"
+        if try await gameAppears(exe, appid: profile.appid, besides: before, asked: asked) { return .launched(pid: pid) }
+        // A notice Steam shows first is for Kamen to answer; a restart would only show it again.
+        if steam.launchWaitingForYou(appid: profile.appid, since: asked.addingTimeInterval(-2)) {
+            throw GameError.steamWaitingForYou(profile.name)
         }
-        if let other = others.first { throw GameError.steamIgnoredLaunchBeside(profile.name, other: other) }
+
+        // Never restart Steam, or blame anything, while it is still installing for the game.
+        func stillInstalling() async throws {
+            if let installer = ((try? await steam.processes()) ?? []).first(where: { Self.isProgram($0) && !before.contains($0) }) {
+                throw GameError.steamStillInstalling(profile.name, installer: installer)
+            }
+        }
+        try await stillInstalling()
+        if let other = ((try? await steam.processes()) ?? []).first(where: Self.isProgram) {
+            throw GameError.steamIgnoredLaunchBeside(profile.name, other: other)
+        }
         let restarted = Date()
         _ = try await steam.restart(muted: muted)
         try await waitForSignIn(after: restarted)
+        before = Set((try? await steam.processes()) ?? [])
+        asked = Date()
         pid = try ask()
-        if try await gameAppears(exe) { return .launched(pid: pid, restartedSteam: true) }
+        if try await gameAppears(exe, appid: profile.appid, besides: before, asked: asked) {
+            return .launched(pid: pid, restartedSteam: true)
+        }
+        try await stillInstalling()
+        if steam.launchWaitingForYou(appid: profile.appid, since: asked.addingTimeInterval(-2)) {
+            throw GameError.steamWaitingForYou(profile.name)
+        }
         throw GameError.steamIgnoredLaunch(profile.name)
     }
 
-    private func gameAppears(_ exe: String) async throws -> Bool {
+    /// A program in Steam's bottle that is neither Wine's nor Steam's own: a game, or an installer Steam runs.
+    static func isProgram(_ process: String) -> Bool {
+        !SteamStore.wineSystemProcesses.contains(process) && !process.hasPrefix("steam") && process != "gameoverlayui.exe"
+    }
+
+    /// Waits `launchWait` for the game. A program that wasn't in `before` is Steam installing something first, and a
+    /// notice in Steam's window waits on Kamen: while either lasts, the wait goes on, `launchWait` past its last
+    /// sighting, up to `setupWait` from the ask.
+    private func gameAppears(_ exe: String, appid: Int, besides before: Set<String>, asked: Date) async throws -> Bool {
         let clock = ContinuousClock()
-        let deadline = clock.now + launchWait
+        let start = clock.now
+        var deadline = start + launchWait
         repeat {
             try await Task.sleep(for: pollInterval)
-            if let running = try? await steam.processes(), running.contains(exe) { return true }
+            guard let running = try? await steam.processes() else { continue }
+            if running.contains(exe) { return true }
+            if running.contains(where: { Self.isProgram($0) && !before.contains($0) })
+                || steam.launchWaitingForYou(appid: appid, since: asked.addingTimeInterval(-2)) {
+                deadline = min(max(deadline, clock.now + launchWait), start + setupWait)
+            }
         } while clock.now < deadline
         return false
     }

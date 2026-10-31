@@ -140,3 +140,29 @@ func invalidNames(_ s: String) { #expect(throws: BottleError.self) { try BottleN
     let prefixA = rig.tmp.paths.bottle("A").appending(path: "prefix").path
     #expect(rig.lines(rig.serverCalls) == ["\(prefixA) -k", "\(prefixA) -w"])
 }
+
+// MARK: - Engine replacement
+
+private func manifest(_ entries: [(id: String, replaces: [String])]) -> EngineManifest {
+    EngineManifest(engines: entries.enumerated().map { i, e in
+        EngineEntry(id: e.id, wineVersion: "10.0", url: URL(string: "https://github.com/kamenlevi/Cellar")!,
+                    sha256: String(repeating: "0", count: 64), size: 1, isDefault: i == 0, replaces: e.replaces)
+    })
+}
+
+@Test func aBottleOnAReplacedEngineMovesToItsReplacement() async throws {
+    let rig = try Rig()
+    let name = try BottleName("Steam")
+    _ = try await rig.store.create(name, engineId: "fake")
+    try FakeEngine.installed(id: "fake-c2", in: rig.tmp.paths.engines)
+    #expect(try await rig.store.moveToNewerEngine(name, manifest: manifest([("fake-c2", ["fake"])])) == "fake-c2")
+    #expect(try rig.store.info(name).engineId == "fake-c2")
+}
+
+@Test func aBottleOnACurrentEngineStays() async throws {
+    let rig = try Rig()
+    let name = try BottleName("Steam")
+    _ = try await rig.store.create(name, engineId: "fake")
+    #expect(try await rig.store.moveToNewerEngine(name, manifest: manifest([("other", ["older"]), ("fake", [])])) == nil)
+    #expect(try rig.store.info(name).engineId == "fake")
+}

@@ -1,11 +1,13 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import CellarCore
 
 /// The shared Steam bottle over a fake engine, with Outer Wilds "installed" in it. The fake `wine` records each
 /// call with the environment that matters, plays Steam (launching it writes a healthy tasklist and, unless told
 /// not to, a signed-in connection log; `-applaunch` adds the game to the tasklist unless Steam is `deaf`, or `stale`
-/// until its next start; `-shutdown` empties it) and answers tasklist from a file.
+/// until its next start, or runs an installer first when `slowSetup`; `-shutdown` empties it) and answers tasklist from a
+/// file.
 struct GameRig {
     let tmp: TempRoot
     let calls: URL
@@ -15,6 +17,14 @@ struct GameRig {
     let stale: URL
     /// Steam ignores every launch.
     let deaf: URL
+    /// Steam shows a notice before the game ("Grab a controller…", seen 2026-10-30) that nobody answers.
+    let notice: URL
+    /// The same notice, answered after 3 s: then the game starts.
+    let noticeAnswered: URL
+    /// Steam runs DXSETUP.exe for 3 s before the game starts, as on a first launch.
+    let slowSetup: URL
+    /// Steam's DXSETUP.exe never finishes.
+    let endlessSetup: URL
     let steam: SteamStore
     let games: GameStore
 
@@ -25,6 +35,10 @@ struct GameRig {
         noSignIn = tmp.url.appending(path: "no-sign-in")
         stale = tmp.url.appending(path: "stale")
         deaf = tmp.url.appending(path: "deaf")
+        notice = tmp.url.appending(path: "notice")
+        noticeAnswered = tmp.url.appending(path: "notice-answered")
+        slowSetup = tmp.url.appending(path: "slow-setup")
+        endlessSetup = tmp.url.appending(path: "endless-setup")
         let steamDir = #""$WINEPREFIX/drive_c/Program Files (x86)/Steam""#
         let wine = """
         #!/bin/sh
@@ -43,7 +57,23 @@ struct GameRig {
               printf '[%s] [Logged On, 4, 7] [U:1:1] RecvMsgClientLogOnResponse() : processing complete\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/connection_log.txt
             fi ;;
           *-applaunch\\ *)
-            if [ ! -f '\(stale.path)' ] && [ ! -f '\(deaf.path)' ]; then
+            if [ -f '\(stale.path)' ] || [ -f '\(deaf.path)' ]; then
+              :
+            elif [ -f '\(notice.path)' ]; then
+              mkdir -p \(steamDir)/logs
+              printf '[%s] GameAction [AppID 753640, ActionID 1] : LaunchApp waiting for user response to ShowInterstitials ""\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/console_log.txt
+            elif [ -f '\(noticeAnswered.path)' ]; then
+              mkdir -p \(steamDir)/logs
+              printf '[%s] GameAction [AppID 753640, ActionID 1] : LaunchApp waiting for user response to ShowInterstitials ""\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/console_log.txt
+              (sleep 3; printf '[%s] GameAction [AppID 753640, ActionID 1] : LaunchApp changed task to Completed with ""\\r\\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> \(steamDir)/logs/console_log.txt
+               printf '"OuterWilds.exe","50"\\r\\n' >> '\(tasklist.path)') &
+            elif [ -f '\(endlessSetup.path)' ]; then
+              printf '"DXSETUP.exe","70"\\r\\n' >> '\(tasklist.path)'
+            elif [ -f '\(slowSetup.path)' ]; then
+              printf '"DXSETUP.exe","70"\\r\\n' >> '\(tasklist.path)'
+              (sleep 3; grep -v DXSETUP '\(tasklist.path)' > '\(tasklist.path).new'; mv '\(tasklist.path).new' '\(tasklist.path)'
+               printf '"OuterWilds.exe","50"\\r\\n' >> '\(tasklist.path)') &
+            else
               printf '"OuterWilds.exe","50"\\r\\n' >> '\(tasklist.path)'
             fi ;;
           *-shutdown) : > '\(tasklist.path)' ;;
@@ -84,7 +114,7 @@ struct GameRig {
         if !signedIn { try Data().write(to: noSignIn) }
         try? FileManager.default.removeItem(at: calls)
         games = GameStore(paths: tmp.paths, steam: steam, signInWait: .seconds(1), launchWait: .seconds(2),
-                          pollInterval: .milliseconds(200))
+                          setupWait: .seconds(5), pollInterval: .milliseconds(200))
     }
 
     var lines: [String] { ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
@@ -272,4 +302,91 @@ private var throughSteam: GameProfile {
     _ = try await rig.games.play(throughSteam, muted: true)
     #expect(rig.steam.gamesMuted)
     #expect(rig.lines.filter { $0.contains("steam.exe -no-cef-sandbox |") }.allSatisfy { $0.contains("winecoreaudio.drv=d") })
+}
+
+@Test func firstLaunchInstallersAreWaitedForNotRestarted() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.slowSetup)
+    guard case .launched(_, let restarted) = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(!restarted)
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func aGameAlreadyRunningIsNotTakenForAnInstaller() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    _ = try await rig.steam.start()
+    try Data().write(to: rig.stale)
+    let handle = try FileHandle(forWritingTo: rig.tasklist)
+    try handle.seekToEnd(); try handle.write(contentsOf: Data("\"Animal Well.exe\",\"60\"\r\n".utf8)); try handle.close()
+    let t0 = Date()
+    await #expect(throws: GameError.steamIgnoredLaunchBeside("Outer Wilds", other: "animal well.exe")) {
+        try await rig.games.play(throughSteam)
+    }
+    #expect(Date().timeIntervalSince(t0) < 8)
+}
+
+@Test func thirtyTwoBitExeIsRefusedForD3DMetal() async throws {
+    let rig = try await GameRig()
+    try PEFixture.make(machine: 0x14c, imports: ["d3d11.dll"])
+        .write(to: rig.steam.steamFolder.appending(path: "steamapps/common/Outer Wilds/OuterWilds.exe"))
+    await #expect(throws: RendererError.d3dmetalNeeds64Bit("Outer Wilds")) { try await rig.games.play(outerWilds) }
+    #expect(!rig.lines.contains { $0.contains("OuterWilds.exe") })
+}
+
+@Test func unreadableExeIsStillStarted() async throws {
+    let rig = try await GameRig()  // its OuterWilds.exe is just "MZ"
+    _ = try await rig.games.play(outerWilds)
+    #expect(await rig.waitFor("OuterWilds.exe |") != nil)
+}
+
+@Test func startingIsAnnouncedOnlyForAGameThatCanStart() async throws {
+    let rig = try await GameRig()
+    let count = Mutex(0)
+    let other = GameProfile(id: "journey", name: "Journey", appid: 638230, exe: "Journey.exe", renderer: .d3dmetal)
+    await #expect(throws: GameError.notInstalled("Journey")) {
+        try await rig.games.play(other, starting: { count.withLock { $0 += 1 } })
+    }
+    #expect(count.withLock { $0 } == 0)
+    _ = try await rig.games.play(outerWilds, starting: { count.withLock { $0 += 1 } })
+    #expect(count.withLock { $0 } == 1)
+}
+
+@Test func anInstallerThatNeverEndsIsNotKilledOrBlamed() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.endlessSetup)
+    await #expect(throws: GameError.steamStillInstalling("Outer Wilds", installer: "dxsetup.exe")) {
+        try await rig.games.play(throughSteam)
+    }
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func playSignsSteamBackInWhenItWasSignedOutElsewhere() async throws {
+    let rig = try await GameRig()
+    try Data(SteamLogFixtures.connectionReplaced.utf8)
+        .write(to: rig.steam.steamFolder.appending(path: "logs/connection_log.txt"))
+    guard case .launched = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(rig.lines.contains { $0.contains("-shutdown") })
+    #expect(rig.lines.filter { $0.contains("steam.exe -no-cef-sandbox |") }.count == 1)
+}
+
+@Test func aNoticeSteamWaitsOnIsWaitedForNotRestarted() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.noticeAnswered)
+    guard case .launched(_, let restarted) = try await rig.games.play(throughSteam) else { Issue.record("not launched"); return }
+    #expect(!restarted)
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func anUnansweredNoticeEndsInASentenceNotARestart() async throws {
+    let rig = try await GameRig(steamRunning: false)
+    try Data().write(to: rig.notice)
+    await #expect(throws: GameError.steamWaitingForYou("Outer Wilds")) { try await rig.games.play(throughSteam) }
+    #expect(!rig.lines.contains { $0.contains("-shutdown") })
+}
+
+@Test func waitingForYouSaysWhatToDo() {
+    #expect(GameError.steamWaitingForYou("Journey").errorDescription
+            == "Steam is waiting for you to answer something in its window before it starts Journey.")
+    #expect(GameError.steamWaitingForYou("Journey").recoverySuggestion
+            == "Answer it in the Steam window (often a notice with an OK button); Journey starts after that.")
 }

@@ -6,6 +6,10 @@ public enum SteamError: Error, Equatable {
     case installFailed(String)
     /// Steam ran but its window process (steamwebhelper.exe) never came up, even after one restart.
     case noWindow
+    /// Steam for Mac signed in to the account, so Steam signed Cellar's Steam out; restarting would just swap them back.
+    case signedInElsewhere
+    /// Signed out from elsewhere, but restarting Steam would kill this program (a game) running in its bottle.
+    case signedOutWhileGameRuns(String)
 }
 
 public struct SteamStatus: Equatable, Sendable {
@@ -29,6 +33,8 @@ public struct SteamStatus: Equatable, Sendable {
         let signIn: String = switch health.signIn {
         case .signedIn(let since): "yes (since \(when(since)))"
         case .signedOut: "no"
+        case .signedInElsewhere:
+            "no: your account signed in somewhere else (Steam for Mac or another computer), so Steam signed this one out. Run: cellar steam"
         case .unknown: "unknown"
         }
         let loop = health.crashLoop
@@ -52,6 +58,8 @@ public enum StartOutcome: Equatable, Sendable {
     case clearedStaleStateThenStarted
     /// Steam came up without its window process, so Cellar restarted it once.
     case restartedAfterNoWindow
+    /// Steam was signed out because the account signed in somewhere else, so Cellar restarted it to sign back in.
+    case signedBackIn
 }
 
 /// Windows Steam in Cellar's one shared bottle, "Steam". Kamen signs in himself; Cellar never touches credentials.
@@ -71,6 +79,10 @@ public struct SteamStore: Sendable {
     let engines: EngineStore
     let installer: URL
     let engineId: String?
+    /// Says which engine replaces the bottle's own; a fresh Steam start moves the bottle there.
+    let manifest: EngineManifest?
+    /// Lines for the person running Cellar (a one-time engine download).
+    let announce: @Sendable (String) -> Void
     let macSteam: @Sendable () -> Bool
     /// How long `tasklist` and `-shutdown` may take before the session counts as stuck.
     let commandTimeout: Duration
@@ -80,6 +92,8 @@ public struct SteamStore: Sendable {
 
     public init(paths: CellarPaths, bottles: BottleStore, engines: EngineStore,
                 installer: URL = SteamStore.installerURL, engineId: String? = nil,
+                manifest: EngineManifest? = try? EngineManifest.bundled(),
+                announce: @escaping @Sendable (String) -> Void = { _ in },
                 macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning,
                 commandTimeout: Duration = .seconds(15),
                 windowWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
@@ -88,6 +102,8 @@ public struct SteamStore: Sendable {
         self.engines = engines
         self.installer = installer
         self.engineId = engineId
+        self.manifest = manifest
+        self.announce = announce
         self.macSteam = macSteam
         self.commandTimeout = commandTimeout
         self.windowWait = windowWait
@@ -188,6 +204,16 @@ public struct SteamStore: Sendable {
         do {
             let running = try await processes()
             if running.contains("steam.exe") && running.contains("steamwebhelper.exe") {
+                // A Steam signed out from elsewhere never reconnects by itself; a fresh one signs in with the saved login.
+                if signedInElsewhere {
+                    if macSteam() { throw SteamError.signedInElsewhere }
+                    // A restart ends the bottle's session, and a running game with it.
+                    if let game = running.first(where: GameStore.isProgram) { throw SteamError.signedOutWhileGameRuns(game) }
+                    let wasMuted = gamesMuted
+                    try await stop()
+                    _ = try await start(muted: muted || wasMuted)
+                    return .signedBackIn
+                }
                 // Steam hands this to the instance that's already running, which shows its window.
                 try bottles.runner(for: name, mode: .interactive).spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder)
                 return .broughtForward
@@ -198,6 +224,8 @@ public struct SteamStore: Sendable {
             // Always end the session first: the check above ran headless (no display driver), and a
             // Steam started inside that session would get no window.
             try await bottles.kill(name)
+            // Nothing runs in the bottle now, so it can move to a newer build of its engine.
+            if let manifest { await moveToNewerEngine(manifest) }
         } catch WineRunnerError.timedOut {
             // The session doesn't answer: it's stuck.
             try await bottles.kill(name)
@@ -213,6 +241,19 @@ public struct SteamStore: Sendable {
         throw SteamError.noWindow
     }
 
+    /// Best effort: offline or with GitHub down, Steam still starts on the engine it has.
+    private func moveToNewerEngine(_ manifest: EngineManifest) async {
+        guard let current = try? bottles.info(name).engineId, let entry = manifest.replacement(for: current) else { return }
+        if (try? engines.installedEngine(id: entry.id)) ?? nil == nil {
+            announce("Updating Cellar's Wine engine to \(entry.id) (a one-time download, \(entry.size / 1_000_000) MB)…")
+        }
+        do {
+            _ = try await bottles.moveToNewerEngine(name, manifest: manifest)
+        } catch {
+            announce("Couldn't get \(entry.id) (\(error.localizedDescription)), so Steam is staying on \(current) for now.")
+        }
+    }
+
     /// Starts a fresh Steam. It runs with D3DMetal when that is imported, because the games Steam launches get their
     /// DLL settings from Steam's own environment: Wine drops WINEDLLOVERRIDES set anywhere in between.
     private func launch(muted: Bool) throws {
@@ -224,10 +265,15 @@ public struct SteamStore: Sendable {
             env["ROSETTA_ADVERTISE_AVX"] = "1"
             renderer = .d3dmetal
         }
+        env["WINEDLLOVERRIDES", default: ""] += ";\(Self.noOverlay)"
         if muted { env["WINEDLLOVERRIDES", default: ""] += ";\(Self.noSound)" }
         try runner.spawn([steamExe.path] + Self.launchFlags, cwd: steamFolder, environmentOverrides: env)
         try Data((renderer.rawValue + (muted ? " muted" : "")).utf8).write(to: rendererFile)
     }
+
+    /// Keeps Steam's overlay out of the (64-bit) games Steam launches: under Wine its hook can take the game's keyboard
+    /// away mid-game (Chants of Sennaar, 2026-10-31). Steam itself is 32-bit and keeps its own DLL.
+    static let noOverlay = "gameoverlayrenderer64=d"
 
     /// The DLL override that leaves a program with no sound driver at all.
     static let noSound = "winecoreaudio.drv=d"
@@ -272,22 +318,36 @@ public struct SteamStore: Sendable {
         return try await start(muted: muted)
     }
 
+    /// Whether Steam's log says it was signed out because the account signed in somewhere else.
+    public var signedInElsewhere: Bool {
+        if case .signedInElsewhere = health().signIn { true } else { false }
+    }
+
     public func status() async throws -> SteamStatus {
         let installed = isInstalled()
         // A session that doesn't answer in time is reported as not running.
         let running = installed ? ((try? await processes()) ?? []) : []
-        let logs = steamFolder.appending(path: "logs")
-        func tail(_ file: String) -> String {
-            guard let handle = try? FileHandle(forReadingFrom: logs.appending(path: file)) else { return "" }
-            defer { try? handle.close() }
-            let end = (try? handle.seekToEnd()) ?? 0
-            try? handle.seek(toOffset: end > 262_144 ? end - 262_144 : 0)
-            return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-        }
-        let health = SteamLogs.health(connectionLog: tail("connection_log.txt"), webhelperLog: tail("webhelper.txt"),
-                                      bootstrapLog: tail("bootstrap_log.txt"), now: Date())
         return SteamStatus(installed: installed, running: running.contains("steam.exe"),
                            webhelperRunning: running.contains("steamwebhelper.exe"),
-                           macSteamRunning: macSteam(), health: health)
+                           macSteamRunning: macSteam(), health: health())
+    }
+
+    /// Whether Steam's launch of `appid`, asked at `since`, is waiting on the user in the Steam window.
+    public func launchWaitingForYou(appid: Int, since: Date) -> Bool {
+        SteamLogs.launchWaitingForYou(consoleLog: tail("console_log.txt"), appid: appid, since: since)
+    }
+
+    /// The last 256 KB of one of Steam's logs.
+    private func tail(_ file: String) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: steamFolder.appending(path: "logs").appending(path: file)) else { return "" }
+        defer { try? handle.close() }
+        let end = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: end > 262_144 ? end - 262_144 : 0)
+        return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+    }
+
+    private func health() -> SteamHealth {
+        SteamLogs.health(connectionLog: tail("connection_log.txt"), webhelperLog: tail("webhelper.txt"),
+                         bootstrapLog: tail("bootstrap_log.txt"), now: Date())
     }
 }
