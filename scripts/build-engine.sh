@@ -69,6 +69,16 @@ if command -v ccache >/dev/null; then
     cross=(i386_CC="ccache i686-w64-mingw32-gcc" x86_64_CC="ccache x86_64-w64-mingw32-gcc")
 fi
 
+# The template's runtime libraries (Sikarugir's), which the engine ships and loads.
+template="$work/template" && rm -rf "$template" && mkdir -p "$template"
+tar -xJf "$work/dl/$TEMPLATE_ASSET" -C "$template"
+frameworks=$(find "$template" -maxdepth 3 -type d -path '*/Contents/Frameworks' | head -1)
+template_libs="$frameworks/GStreamer.framework/Versions/1.0/lib"
+# Wine's media parts (winegstreamer, winedmo) are compiled with Homebrew's GStreamer and FFmpeg 7 headers but linked
+# against the template's own libraries: the files they load at run time, by @rpath, as engine c2's do.
+export GSTREAMER_LIBS="-L$template_libs -L$frameworks $(pkg-config --libs-only-l gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-tag-1.0)"
+export FFMPEG_LIBS="-L$template_libs $(pkg-config --libs-only-l libavutil libavformat libavcodec)"
+
 out="$work/out/$ENGINE_ID"
 rm -rf "$out" "$work/build" && mkdir -p "$out" "$work/build/include"
 # Wine's dependency scanner looks for generated headers in the build tree.
@@ -91,9 +101,6 @@ make install-lib
 # Every library Wine opens by name at run time must be one the engine ships (Sikarugir's template), or one engine c2
 # also asks for without shipping it (Wine runs on without it).
 optional="libodbc.dylib"
-template="$work/template" && rm -rf "$template" && mkdir -p "$template"
-tar -xJf "$work/dl/$TEMPLATE_ASSET" -C "$template"
-frameworks=$(find "$template" -maxdepth 3 -type d -path '*/Contents/Frameworks' | head -1)
 missing=0
 while read -r soname; do
     [[ " $optional " == *" $soname "* ]] || [ -e "$frameworks/$soname" ] || [ -e "/usr/lib/$soname" ] || [ -e "/System/Library/Frameworks/${soname%%.*}.framework" ] \
@@ -101,11 +108,9 @@ while read -r soname; do
 done < <(sed -n 's/^#define SONAME_LIB[A-Z0-9_]* "\(.*\)"$/\1/p' include/config.h)
 [ $missing = 0 ] || exit 1
 
-# Wine's media parts (winegstreamer, winedmo) link GStreamer, GLib and FFmpeg at build time, by Homebrew's paths. At run
-# time they must load the template's copies, as engine c2's do: by @rpath, found through DYLD_FALLBACK_LIBRARY_PATH
-# (WineEnvironment). Each such library must be in the template; then every relinked file is loaded for real (all
-# symbols bound at once) with only the template's libraries to find, which is what happens on the player's Mac.
-template_libs="$frameworks/GStreamer.framework/Versions/1.0/lib"
+# Anything still linked by a Homebrew path is pointed at the template's copy, by @rpath, found at run time through
+# DYLD_FALLBACK_LIBRARY_PATH (WineEnvironment); that copy must exist. Then the media parts and every relinked file are
+# loaded for real (all symbols bound at once) with only the template's libraries to find, as on the player's Mac.
 relinked=()
 while read -r macho; do
     changed=0
@@ -119,6 +124,10 @@ while read -r macho; do
     [ $changed = 0 ] || { codesign -f -s - "$macho" 2>/dev/null; relinked+=("$macho"); }
 done < <(find "$out/wine" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
 [ $missing = 0 ] || exit 1
+for part in winegstreamer winedmo; do
+    f="$out/wine/lib/wine/x86_64-unix/$part.so"
+    if [ -e "$f" ] && [[ " ${relinked[*]-} " != *" $f "* ]]; then relinked+=("$f"); fi
+done
 if [ ${#relinked[@]} -gt 0 ]; then
     printf '#include <dlfcn.h>\n#include <stdio.h>\nint main(int c, char **v) { int bad = 0;\n for (int i = 1; i < c; i++) if (!dlopen(v[i], RTLD_NOW | RTLD_LOCAL)) { printf("%%s\\n", dlerror()); bad = 1; }\n return bad; }\n' > "$work/loadcheck.c"
     clang -o "$work/loadcheck" "$work/loadcheck.c"
