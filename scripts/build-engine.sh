@@ -47,6 +47,13 @@ for p in "$repo"/engine/patches/crossover-$CX_VERSION/*.patch; do
     patch -d "$wine_src" -p1 --forward < "$p"
 done
 
+# CrossOver's own build generates include/distversion.h; winedbg's crash dialog needs its two messages.
+cat > "$wine_src/include/distversion.h" <<'H'
+/* Written by Cellar's scripts/build-engine.sh (CrossOver's build generates this file). */
+#define WINDEBUG_WHAT_HAPPENED_MESSAGE "This program crashed in Cellar's Wine engine."
+#define WINDEBUG_USER_SUGGESTION_MESSAGE "The details below can help find out why."
+H
+
 # --- Build -----------------------------------------------------------------------------------------------------
 brew_prefix="$(brew --prefix)"
 export PATH="$brew_prefix/opt/bison/bin:$brew_prefix/opt/flex/bin:$PATH"
