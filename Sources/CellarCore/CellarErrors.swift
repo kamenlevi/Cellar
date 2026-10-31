@@ -68,6 +68,8 @@ extension SteamError: LocalizedError {
         case .installFailed(let reason): "Steam's installer finished but Steam.exe isn't there (\(reason))."
         case .noWindow: "Steam started but its window never appeared, even after one automatic restart."
         case .signedInElsewhere: "Steam is signed out, because your account signed in on Steam for Mac."
+        case .signedOutWhileGameRuns(let game):
+            "Steam is signed out, because your account signed in somewhere else, and \(game) is still running in Steam's bottle."
         }
     }
 
@@ -78,6 +80,7 @@ extension SteamError: LocalizedError {
         case .installFailed: "See the log: ~/Library/Logs/Cellar/Steam.log"
         case .noWindow: "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log"
         case .signedInElsewhere: "Quit Steam for Mac (Steam ▸ Quit Steam), then run: cellar steam"
+        case .signedOutWhileGameRuns(let game): "Quit \(game) from its own menu, then run: cellar steam"
         }
     }
 }

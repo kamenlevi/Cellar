@@ -54,10 +54,12 @@ private struct SteamRig {
         bottles = BottleStore(paths: tmp.paths, engines: engines, discard: TempRoot.discard)
     }
 
-    func store(installer: URL? = nil, macSteam: Bool = false, manifest: EngineManifest? = nil) throws -> SteamStore {
+    func store(installer: URL? = nil, macSteam: Bool = false, manifest: EngineManifest? = nil,
+               announce: @escaping @Sendable (String) -> Void = { _ in }) throws -> SteamStore {
         let source = try installer ?? fakeInstaller()
         return SteamStore(paths: tmp.paths, bottles: bottles, engines: engines,
-                          installer: source, engineId: "fake", manifest: manifest, macSteam: { macSteam }, commandTimeout: .seconds(2),
+                          installer: source, engineId: "fake", manifest: manifest, announce: announce,
+                          macSteam: { macSteam }, commandTimeout: .seconds(2),
                           windowWait: .seconds(3), pollInterval: .milliseconds(200))
     }
 
@@ -87,8 +89,9 @@ private struct SteamRig {
         try Data((csv + "\r\n").utf8).write(to: tasklist)
     }
 
-    func installedStore(macSteam: Bool = false, manifest: EngineManifest? = nil) async throws -> SteamStore {
-        let s = try store(macSteam: macSteam, manifest: manifest)
+    func installedStore(macSteam: Bool = false, manifest: EngineManifest? = nil,
+                        announce: @escaping @Sendable (String) -> Void = { _ in }) async throws -> SteamStore {
+        let s = try store(macSteam: macSteam, manifest: manifest, announce: announce)
         try await s.install()
         try? FileManager.default.removeItem(at: calls)
         try? FileManager.default.removeItem(at: serverCalls)
@@ -185,8 +188,23 @@ private func replacingManifest() -> EngineManifest {
     let rig = try SteamRig()
     let steam = try await rig.installedStore(manifest: replacingManifest())
     try FakeEngine.installed(id: "fake-c2", in: rig.tmp.paths.engines, wine: rig.wine, wineserver: rig.wineserver)
-    #expect(try await steam.start() == .started)
+    _ = try await steam.start()
     #expect(try rig.bottles.info(BottleName(SteamStore.bottleName)).engineId == "fake-c2")
+}
+
+@Test func steamStillStartsWhenTheNewerEngineCannotBeDownloaded() async throws {
+    // Offline, a captive portal, a GitHub outage: Steam starts on the engine it has (final review, 2026-10-31).
+    let rig = try SteamRig()
+    let missing = rig.tmp.url.appending(path: "nowhere/engine.tar.xz")
+    let manifest = EngineManifest(engines: [EngineEntry(id: "fake-c2", wineVersion: "10.0", url: missing,
+                                                        sha256: String(repeating: "0", count: 64), size: 254_163_984,
+                                                        isDefault: true, replaces: ["fake"])])
+    let said = Said()
+    let steam = try await rig.installedStore(manifest: manifest, announce: said.add)
+    _ = try await steam.start()
+    #expect(try rig.bottles.info(BottleName(SteamStore.bottleName)).engineId == "fake")
+    #expect(said.lines.contains { $0.contains("fake-c2") && $0.contains("254 MB") })
+    #expect(said.lines.contains { $0.contains("staying on fake") })
 }
 
 @Test func aRunningSteamKeepsItsEngine() async throws {
@@ -305,6 +323,14 @@ private func replacingManifest() -> EngineManifest {
 
 // MARK: - Step 5 of Kamen's checklist: Steam up, but its window process gone
 
+/// Collects what SteamStore says.
+private final class Said: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _lines: [String] = []
+    var lines: [String] { lock.withLock { _lines } }
+    func add(_ line: String) { lock.withLock { _lines.append(line) } }
+}
+
 private func spawns(_ rig: SteamRig) -> Int { rig.lines(rig.calls).filter { $0.contains("-no-cef-sandbox") }.count }
 
 @Test func steamThatComesUpWithoutItsWindowIsRestartedOnce() async throws {
@@ -365,6 +391,23 @@ private func writeConnectionLog(_ text: String, for steam: SteamStore) throws {
     await #expect(throws: SteamError.signedInElsewhere) { try await steam.start() }
     #expect(!rig.lines(rig.calls).contains { $0.contains("-shutdown") })
     #expect(spawns(rig) == 0)
+}
+
+@Test func aSignedOutSteamIsNotRestartedUnderARunningGame() async throws {
+    // A restart kills the bottle's wineserver, and the game with it (final review, 2026-10-31).
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore()
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe", "outerwilds.exe"])
+    try writeConnectionLog(SteamLogFixtures.connectionReplaced, for: steam)
+    await #expect(throws: SteamError.signedOutWhileGameRuns("outerwilds.exe")) { try await steam.start() }
+    #expect(!rig.lines(rig.calls).contains { $0.contains("-shutdown") })
+    #expect(spawns(rig) == 0)
+}
+
+@Test func signedOutWhileGameRunsSaysWhatToDo() {
+    let e = SteamError.signedOutWhileGameRuns("outerwilds.exe")
+    #expect(e.errorDescription == "Steam is signed out, because your account signed in somewhere else, and outerwilds.exe is still running in Steam's bottle.")
+    #expect(e.recoverySuggestion == "Quit outerwilds.exe from its own menu, then run: cellar steam")
 }
 
 @Test func aMutedSteamStaysMutedWhenItSignsBackIn() async throws {

@@ -8,6 +8,8 @@ public enum SteamError: Error, Equatable {
     case noWindow
     /// Steam for Mac signed in to the account, so Steam signed Cellar's Steam out; restarting would just swap them back.
     case signedInElsewhere
+    /// Signed out from elsewhere, but restarting Steam would kill this program (a game) running in its bottle.
+    case signedOutWhileGameRuns(String)
 }
 
 public struct SteamStatus: Equatable, Sendable {
@@ -79,6 +81,8 @@ public struct SteamStore: Sendable {
     let engineId: String?
     /// Says which engine replaces the bottle's own; a fresh Steam start moves the bottle there.
     let manifest: EngineManifest?
+    /// Lines for the person running Cellar (a one-time engine download).
+    let announce: @Sendable (String) -> Void
     let macSteam: @Sendable () -> Bool
     /// How long `tasklist` and `-shutdown` may take before the session counts as stuck.
     let commandTimeout: Duration
@@ -89,6 +93,7 @@ public struct SteamStore: Sendable {
     public init(paths: CellarPaths, bottles: BottleStore, engines: EngineStore,
                 installer: URL = SteamStore.installerURL, engineId: String? = nil,
                 manifest: EngineManifest? = try? EngineManifest.bundled(),
+                announce: @escaping @Sendable (String) -> Void = { _ in },
                 macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning,
                 commandTimeout: Duration = .seconds(15),
                 windowWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
@@ -98,6 +103,7 @@ public struct SteamStore: Sendable {
         self.installer = installer
         self.engineId = engineId
         self.manifest = manifest
+        self.announce = announce
         self.macSteam = macSteam
         self.commandTimeout = commandTimeout
         self.windowWait = windowWait
@@ -201,6 +207,8 @@ public struct SteamStore: Sendable {
                 // A Steam signed out from elsewhere never reconnects by itself; a fresh one signs in with the saved login.
                 if signedInElsewhere {
                     if macSteam() { throw SteamError.signedInElsewhere }
+                    // A restart ends the bottle's session, and a running game with it.
+                    if let game = running.first(where: GameStore.isProgram) { throw SteamError.signedOutWhileGameRuns(game) }
                     let wasMuted = gamesMuted
                     try await stop()
                     _ = try await start(muted: muted || wasMuted)
@@ -217,7 +225,7 @@ public struct SteamStore: Sendable {
             // Steam started inside that session would get no window.
             try await bottles.kill(name)
             // Nothing runs in the bottle now, so it can move to a newer build of its engine.
-            if let manifest { _ = try await bottles.moveToNewerEngine(name, manifest: manifest) }
+            if let manifest { await moveToNewerEngine(manifest) }
         } catch WineRunnerError.timedOut {
             // The session doesn't answer: it's stuck.
             try await bottles.kill(name)
@@ -231,6 +239,19 @@ public struct SteamStore: Sendable {
         try launch(muted: muted)
         if try await windowAppears() { return .restartedAfterNoWindow }
         throw SteamError.noWindow
+    }
+
+    /// Best effort: offline or with GitHub down, Steam still starts on the engine it has.
+    private func moveToNewerEngine(_ manifest: EngineManifest) async {
+        guard let current = try? bottles.info(name).engineId, let entry = manifest.replacement(for: current) else { return }
+        if (try? engines.installedEngine(id: entry.id)) ?? nil == nil {
+            announce("Updating Cellar's Wine engine to \(entry.id) (a one-time download, \(entry.size / 1_000_000) MB)…")
+        }
+        do {
+            _ = try await bottles.moveToNewerEngine(name, manifest: manifest)
+        } catch {
+            announce("Couldn't get \(entry.id) (\(error.localizedDescription)), so Steam is staying on \(current) for now.")
+        }
     }
 
     /// Starts a fresh Steam. It runs with D3DMetal when that is imported, because the games Steam launches get their

@@ -189,7 +189,8 @@ struct D3DMetalCommand: AsyncParsableCommand {
 func steamStore() -> SteamStore {
     let paths = CellarPaths()
     let engines = EngineStore(paths: paths)
-    return SteamStore(paths: paths, bottles: BottleStore(paths: paths, engines: engines), engines: engines)
+    return SteamStore(paths: paths, bottles: BottleStore(paths: paths, engines: engines), engines: engines,
+                      announce: { print($0) })
 }
 
 struct SteamCommand: AsyncParsableCommand {

@@ -25,6 +25,13 @@ private typealias F = SteamLogFixtures
             == .signedIn(since: F.local("2026-10-30 19:38:23")))
 }
 
+@Test func aSteamStillSigningInAfterAReplacementIsSignedOutNotElsewhere() {
+    // Restarted after the replacement, Steam logs "LogOn() called" (as Logged Off) until it connects; that is a new
+    // attempt, not the replaced session (final review, 2026-10-31).
+    let log = F.connectionReplaced + "[2026-10-30 19:38:22] [Logged Off, 4, 0] [U:1:123456789] LogOn() called; not connected yet, scheduling connection. Schedule init returned 1\n"
+    #expect(SteamLogs.signIn(connectionLog: log) == .signedOut(since: F.local("2026-10-30 19:38:22")))
+}
+
 @Test func anOldReplacementDoesNotExplainALaterSignOut() {
     let later = "[2026-10-30 20:00:00] [Logged Off, 4, 0] [U:1:123456789] Sending SteamServersDisconnected_t because we were logged on\n"
     #expect(SteamLogs.signIn(connectionLog: F.connectionReplaced + F.connectionSignedBackIn + later)

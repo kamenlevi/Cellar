@@ -44,7 +44,9 @@ public enum SteamLogs {
                 guard line.contains("[Logged Off,") else { continue }
                 signedOut = time
             }
-            // Back through this sign-out, to the session it ended.
+            // Back through this sign-out, to the session it ended. "LogOn() called" starts a new attempt (a restarted
+            // Steam still connecting), so a replacement before it belongs to the old session.
+            if line.contains("LogOn() called") { break }
             if line.contains("Session Replaced") { replaced = true }
             if line.contains("[Logged On,") { break }
         }
