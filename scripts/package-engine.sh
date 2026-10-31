@@ -87,10 +87,27 @@ check() {
             if grep -qx "$h" <<<"$hashes"; then echo "copy of an Apple toolkit file: ${f#$root/}"; missing=1; fi
         done < <(find "$root" -type f \( -iname '*.dll' -o -iname '*.dylib' -o -iname '*.so' \) -exec shasum -a 256 {} +)
     fi
-    local mac="$root/wine/lib/wine/x86_64-unix/winemac.so"
-    if [ -e "$mac" ] && [ "$(shasum -a 256 "$mac" | awk '{print $1}')" != "$WINEMAC_FIXED_SHA" ]; then
+    local id unix="$root/wine/lib/wine/x86_64-unix"
+    id=$(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' "$root/ENGINE.json" 2>/dev/null | head -1)
+    # Sikarugir's binary build gets the focus fix as byte edits; a source-built engine has it in its source.
+    if [[ "$id" == sikarugir-* ]] && [ -e "$unix/winemac.so" ] \
+        && [ "$(shasum -a 256 "$unix/winemac.so" | awk '{print $1}')" != "$WINEMAC_FIXED_SHA" ]; then
         echo "winemac.so is not the focus-fixed build"; missing=1
     fi
+    # Without these two, games quietly fall back to Wine's own d3d11 instead of the user's D3DMetal.
+    if [ -e "$unix/ntdll.so" ]; then
+        grep -aq CX_APPLEGPTK_LIBD3DSHARED_PATH "$unix/ntdll.so" \
+            || { echo "ntdll.so has no D3DMetal bridge (CX_APPLEGPTK_LIBD3DSHARED_PATH)"; missing=1; }
+        grep -aq WINEDLLPATH_PREPEND "$unix/ntdll.so" || { echo "ntdll.so ignores WINEDLLPATH_PREPEND"; missing=1; }
+    fi
+    if [[ "$id" == crossover-* ]]; then
+        [ -d "$root/wine/share/wine/mono" ] && [ -d "$root/wine/share/wine/gecko" ] \
+            || { echo "Wine Mono or Gecko is missing"; missing=1; }
+    fi
+    # A source build links against Homebrew on the build machine; a path left behind breaks on any other Mac.
+    local brew
+    brew=$(grep -rlaE '/usr/local/(opt|Cellar)/|/opt/homebrew/' "$root/wine" "$root/Frameworks" 2>/dev/null | sed "s|^$root/|  |" || true)
+    if [ -n "$brew" ]; then echo "files that point into Homebrew:"; echo "$brew"; missing=1; fi
     [ $missing = 0 ] && echo "all dependencies resolve"
     return $missing
 }

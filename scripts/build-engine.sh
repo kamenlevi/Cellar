@@ -1,0 +1,109 @@
+#!/bin/bash
+# Builds Cellar's own engine from CodeWeavers' public CrossOver source, with Cellar's patches.
+#
+#   scripts/build-engine.sh <workdir>     download (if needed), build, assemble, check, tar; prints sha256 and size
+#
+# Runs on an x86_64 Mac (GitHub's macos-15-intel runner, see .github/workflows/engine.yml). Build tools and the
+# development files Wine is built against come from Homebrew on that machine; at run time the engine uses the same
+# runtime libraries as engine c2, from Sikarugir's wrapper template, so nothing from Homebrew ships.
+# D3DMetal is Apple's and is never part of the engine: Cellar loads the user's own import via WINEDLLPATH_PREPEND.
+set -euo pipefail
+
+CX_VERSION="25.1.1"
+ENGINE_ID="crossover-$CX_VERSION-c1"
+SOURCE="crossover-sources-$CX_VERSION.tar.gz"
+SOURCE_URL="https://media.codeweavers.com/pub/crossover/source/$SOURCE"
+SOURCE_SHA="7cdcfcfaee8991f7958b5ccb2837c0facec6e8e681cd3ada8d2745bddbe27d13"
+TEMPLATE_ASSET="Template-1.0.11.tar.xz"
+MONO_VERSION="9.4.0"     # dlls/appwiz.cpl/addons.c in this source
+GECKO_VERSION="2.47.4"
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+work="${1:?usage: build-engine.sh <workdir>}"
+mkdir -p "$work/dl" "$work/out"
+work="$(cd "$work" && pwd)"
+jobs="${JOBS:-$(sysctl -n hw.ncpu)}"
+
+[ "$(uname -m)" = x86_64 ] || { echo "build-engine.sh runs on an x86_64 Mac (macos-15-intel)" >&2; exit 1; }
+
+# --- Sources ---------------------------------------------------------------------------------------------------
+cd "$work/dl"
+[ -f "$SOURCE" ] || curl -fL --retry 3 -o "$SOURCE" "$SOURCE_URL"
+[ "$(shasum -a 256 "$SOURCE" | awk '{print $1}')" = "$SOURCE_SHA" ] || { echo "$SOURCE: wrong checksum" >&2; exit 1; }
+gh release download v1.0 -R Sikarugir-App/Wrapper -p "$TEMPLATE_ASSET" --skip-existing
+for f in "wine-mono-$MONO_VERSION-x86.tar.xz" "wine-gecko-$GECKO_VERSION-x86.tar.xz" "wine-gecko-$GECKO_VERSION-x86_64.tar.xz"; do
+    case "$f" in wine-mono*) dir=mono/$MONO_VERSION ;; *) dir=gecko/$GECKO_VERSION ;; esac
+    [ -f "$f" ] || curl -fL --retry 3 -o "$f" "https://dl.winehq.org/wine/wine-$dir/$f"
+done
+
+rm -rf "$work/src" && mkdir -p "$work/src"
+tar -xzf "$SOURCE" -C "$work/src"
+wine_src="$work/src/sources/wine"
+for p in "$repo"/engine/patches/crossover-$CX_VERSION/*.patch; do
+    echo "patch: $(basename "$p")"
+    patch -d "$wine_src" -p1 --forward < "$p"
+done
+
+# --- Build -----------------------------------------------------------------------------------------------------
+brew_prefix="$(brew --prefix)"
+export PATH="$brew_prefix/opt/bison/bin:$brew_prefix/opt/flex/bin:$PATH"
+export PKG_CONFIG_PATH="$brew_prefix/lib/pkgconfig:$brew_prefix/opt/gnutls/lib/pkgconfig:$brew_prefix/opt/freetype/lib/pkgconfig"
+export CPPFLAGS="-I$brew_prefix/include"
+export LDFLAGS="-L$brew_prefix/lib"
+export MACOSX_DEPLOYMENT_TARGET=11.0
+command -v ccache >/dev/null && export CC="ccache clang" CXX="ccache clang++"
+
+out="$work/out/$ENGINE_ID"
+rm -rf "$out" "$work/build" && mkdir -p "$out" "$work/build"
+cd "$work/build"
+"$wine_src/configure" \
+    --prefix="$out/wine" \
+    --enable-archs=i386,x86_64 \
+    --with-mingw=x86_64-w64-mingw32-gcc \
+    --with-coreaudio --with-freetype --with-gnutls --with-gstreamer --with-sdl --with-vulkan \
+    --without-x --without-oss --without-alsa --without-pulse --without-cups --without-sane --without-gphoto \
+    --without-krb5 --without-netapi --without-pcap --without-v4l2 --without-wayland --without-dbus \
+    --disable-tests
+make -j"$jobs"
+make install-lib
+
+# Every library Wine opens by name at run time must be one the engine ships (Sikarugir's template).
+template="$work/template" && rm -rf "$template" && mkdir -p "$template"
+tar -xJf "$work/dl/$TEMPLATE_ASSET" -C "$template"
+frameworks=$(find "$template" -maxdepth 3 -type d -path '*/Contents/Frameworks' | head -1)
+missing=0
+while read -r soname; do
+    [ -e "$frameworks/$soname" ] || [ -e "/usr/lib/$soname" ] || [ -e "/System/Library/Frameworks/${soname%%.*}.framework" ] \
+        || { echo "Wine opens $soname, which the template doesn't ship"; missing=1; }
+done < <(sed -n 's/^#define SONAME_LIB[A-Z0-9_]* "\(.*\)"$/\1/p' include/config.h)
+[ $missing = 0 ] || exit 1
+
+# --- Assemble (the same layout as package-engine.sh's) ----------------------------------------------------------
+mkdir -p "$out/Frameworks" "$out/renderer" "$out/wine/share/wine/mono" "$out/wine/share/wine/gecko"
+for item in "$frameworks"/*; do
+    case "$(basename "$item")" in renderer|SikarugirSdk.framework) continue ;; esac
+    cp -R "$item" "$out/Frameworks/"
+done
+for r in dxvk d9vk dxmt; do cp -R "$frameworks/renderer/$r" "$out/renderer/$r"; done
+tar -xJf "$work/dl/wine-mono-$MONO_VERSION-x86.tar.xz" -C "$out/wine/share/wine/mono"
+for a in x86 x86_64; do tar -xJf "$work/dl/wine-gecko-$GECKO_VERSION-$a.tar.xz" -C "$out/wine/share/wine/gecko"; done
+
+patches=$(cd "$repo/engine/patches/crossover-$CX_VERSION" && ls *.patch | sed 's/.*/"&"/' | paste -sd, -)
+cat > "$out/ENGINE.json" <<JSON
+{
+  "id": "$ENGINE_ID",
+  "wineVersion": "$(cat "$wine_src/VERSION" | sed 's/Wine version //') (CrossOver $CX_VERSION)",
+  "source": "$SOURCE",
+  "patches": [$patches],
+  "sources": { "template": "$TEMPLATE_ASSET", "mono": "$MONO_VERSION", "gecko": "$GECKO_VERSION" },
+  "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
+
+"$repo/scripts/package-engine.sh" --check "$out"
+
+tarball="$work/out/cellar-engine-$ENGINE_ID.tar.xz"
+tar -C "$work/out" -cJf "$tarball" "$ENGINE_ID"
+echo "tarball: $tarball"
+echo "sha256:  $(shasum -a 256 "$tarball" | awk '{print $1}')"
+echo "size:    $(stat -f %z "$tarball")"

@@ -1,0 +1,33 @@
+ntdll: look in WINEDLLPATH_PREPEND before Wine's own DLLs.
+
+Cellar loads Apple's D3DMetal (imported by the user, never shipped) by pointing
+WINEDLLPATH_PREPEND at its `wine` folder, as engine c2 (Sikarugir 10.0_6) does.
+From MacPorts' game-porting-toolkit port, files/1005-ntdll-d3dmetal-env.diff,
+applied to CrossOver 25.1.1's dlls/ntdll/unix/loader.c. LGPL-2.1, like Wine.
+
+--- a/dlls/ntdll/unix/loader.c	2026-10-31 14:43:18
++++ b/dlls/ntdll/unix/loader.c	2026-10-31 14:43:18
+@@ -399,13 +399,22 @@
+ static void set_dll_path(void)
+ {
+     char *p, *path = getenv( "WINEDLLPATH" );
++    char *path_prepend = getenv( "WINEDLLPATH_PREPEND" );
+     int i, count = 0;
+ 
+-    if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
++    if (path) for (p = path, count++; *p; p++) if (*p == ':') count++;
++    if (path_prepend) for (p = path_prepend, count++; *p; p++) if (*p == ':') count++;
+ 
+     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+     count = 0;
+ 
++    if (path_prepend)
++    {
++        path_prepend = strdup( path_prepend );
++        for (p = strtok( path_prepend, ":" ); p; p = strtok( NULL, ":" )) dll_paths[count++] = strdup( p );
++        free( path_prepend );
++    }
++
+     if (!build_dir) dll_paths[count++] = dll_dir;
+ 
+     if (path)

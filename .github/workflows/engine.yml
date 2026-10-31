@@ -1,0 +1,33 @@
+name: Build engine
+
+# Builds Cellar's own Wine engine from CodeWeavers' CrossOver source (scripts/build-engine.sh).
+# Run by hand, or by a push to m4 that changes the build; the tarball is a workflow artifact. Publishing a release
+# is a separate, deliberate step. (A workflow only dispatchable by hand must be on main first.)
+on:
+  workflow_dispatch:
+  push:
+    branches: [m4]
+    paths: ['scripts/build-engine.sh', 'engine/patches/**', '.github/workflows/engine.yml']
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: brew install mingw-w64 bison flex pkgconf ccache freetype gnutls sdl2 molten-vk gstreamer
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ hashFiles('scripts/build-engine.sh', 'engine/patches/**') }}
+          restore-keys: ccache-
+      - name: Build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/build-engine.sh "$RUNNER_TEMP/engine"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cellar-engine
+          path: ${{ runner.temp }}/engine/out/cellar-engine-*.tar.xz
+          compression-level: 0
