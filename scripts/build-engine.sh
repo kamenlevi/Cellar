@@ -52,6 +52,7 @@ distversion='/* Written by Cellar'"'"'s scripts/build-engine.sh (CrossOver'"'"'s
 #define WINDEBUG_WHAT_HAPPENED_MESSAGE "This program crashed in Cellar'"'"'s Wine engine."
 #define WINDEBUG_USER_SUGGESTION_MESSAGE "The details below can help find out why."'
 echo "$distversion" > "$wine_src/include/distversion.h"
+echo "$distversion" > "$wine_src/programs/winedbg/distversion.h"   # where makedep resolves winedbg.rc's include
 
 # --- Build -----------------------------------------------------------------------------------------------------
 brew_prefix="$(brew --prefix)"
