@@ -13,6 +13,8 @@ private struct SteamRig {
     let noWindow: URL
     let noWindowOnce: URL
     let steamOverrides: URL
+    let wine: String
+    let wineserver: String
     let bottles: BottleStore
     let engines: EngineStore
 
@@ -28,7 +30,7 @@ private struct SteamRig {
         let install = installerInstalls
             ? #"mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe""#
             : "true"
-        let wine = """
+        wine = """
         #!/bin/sh
         printf "%s\\n" "$*" >> '\(calls.path)'
         mkdir -p "$WINEPREFIX" && touch "$WINEPREFIX/user.reg"
@@ -46,16 +48,16 @@ private struct SteamRig {
         esac
         exit 0
         """
-        let wineserver = "#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> '\(serverCalls.path)'\n"
+        wineserver = "#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> '\(serverCalls.path)'\n"
         try FakeEngine.installed(id: "fake", in: tmp.paths.engines, wine: wine, wineserver: wineserver)
         engines = EngineStore(paths: tmp.paths, discard: TempRoot.discard)
         bottles = BottleStore(paths: tmp.paths, engines: engines, discard: TempRoot.discard)
     }
 
-    func store(installer: URL? = nil, macSteam: Bool = false) throws -> SteamStore {
+    func store(installer: URL? = nil, macSteam: Bool = false, manifest: EngineManifest? = nil) throws -> SteamStore {
         let source = try installer ?? fakeInstaller()
         return SteamStore(paths: tmp.paths, bottles: bottles, engines: engines,
-                          installer: source, engineId: "fake", macSteam: { macSteam }, commandTimeout: .seconds(2),
+                          installer: source, engineId: "fake", manifest: manifest, macSteam: { macSteam }, commandTimeout: .seconds(2),
                           windowWait: .seconds(3), pollInterval: .milliseconds(200))
     }
 
@@ -85,8 +87,8 @@ private struct SteamRig {
         try Data((csv + "\r\n").utf8).write(to: tasklist)
     }
 
-    func installedStore(macSteam: Bool = false) async throws -> SteamStore {
-        let s = try store(macSteam: macSteam)
+    func installedStore(macSteam: Bool = false, manifest: EngineManifest? = nil) async throws -> SteamStore {
+        let s = try store(macSteam: macSteam, manifest: manifest)
         try await s.install()
         try? FileManager.default.removeItem(at: calls)
         try? FileManager.default.removeItem(at: serverCalls)
@@ -171,6 +173,30 @@ func badInstallerIsNeverRun(_ body: String) async throws {
     let overrides = rig.lines(rig.steamOverrides).last ?? ""
     #expect(overrides.contains("gameoverlayrenderer64=d"))
     #expect(overrides.contains(SteamStore.noSound))
+}
+
+/// "fake-c2" replaces the rig's "fake": the same Wine with fixes, as sikarugir-10.0_6-c2 replaces c1.
+private func replacingManifest() -> EngineManifest {
+    EngineManifest(engines: [EngineEntry(id: "fake-c2", wineVersion: "10.0", url: URL(string: "https://github.com/kamenlevi/Cellar")!,
+                                         sha256: String(repeating: "0", count: 64), size: 1, isDefault: true, replaces: ["fake"])])
+}
+
+@Test func aFreshSteamMovesToTheEngineThatReplacesItsOwn() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore(manifest: replacingManifest())
+    try FakeEngine.installed(id: "fake-c2", in: rig.tmp.paths.engines, wine: rig.wine, wineserver: rig.wineserver)
+    #expect(try await steam.start() == .started)
+    #expect(try rig.bottles.info(BottleName(SteamStore.bottleName)).engineId == "fake-c2")
+}
+
+@Test func aRunningSteamKeepsItsEngine() async throws {
+    // Swapping the engine under live Wine processes isn't safe; the next fresh start moves it.
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore(manifest: replacingManifest())
+    try FakeEngine.installed(id: "fake-c2", in: rig.tmp.paths.engines, wine: rig.wine, wineserver: rig.wineserver)
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    #expect(try await steam.start() == .broughtForward)
+    #expect(try rig.bottles.info(BottleName(SteamStore.bottleName)).engineId == "fake")
 }
 
 @Test func startWhenSteamRunsBringsItForward() async throws {

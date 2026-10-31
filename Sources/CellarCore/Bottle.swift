@@ -128,6 +128,17 @@ public struct BottleStore: Sendable {
         return try await runner.wine([url.path] + arguments, cwd: url.deletingLastPathComponent())
     }
 
+    /// Moves the bottle to the engine that replaces its own (same Wine, with fixes), installing it if needed.
+    /// Returns the new engine's id, or nil when nothing replaces it. Only call it with nothing running in the bottle.
+    public func moveToNewerEngine(_ name: BottleName, manifest: EngineManifest) async throws -> String? {
+        var info = try info(name)
+        guard let entry = manifest.replacement(for: info.engineId) else { return nil }
+        if try engines.installedEngine(id: entry.id) == nil { _ = try await engines.install(entry) }
+        info.engineId = entry.id
+        try JSONEncoder.cellar.encode(info).write(to: infoFile(name), options: .atomic)
+        return entry.id
+    }
+
     /// Stops this bottle's wineserver and every program in it, and nothing outside it.
     public func kill(_ name: BottleName) async throws {
         let runner = try runner(for: name, mode: .headless)

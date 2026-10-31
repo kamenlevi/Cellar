@@ -53,3 +53,14 @@ func checkRefusesAppleToolkitFiles(_ name: String) throws {
     #expect(result.code != 0)
     #expect(result.output.contains("renamed.dll"), "\(result.output)")
 }
+
+@Test func checkRefusesAMacDriverWithoutTheFocusFix() throws {
+    let tmp = try TempRoot()
+    let engine = try FakeEngine.makeFolder(id: "e", in: tmp.url)
+    let dir = engine.appending(path: "wine/lib/wine/x86_64-unix")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data("not the fixed build".utf8).write(to: dir.appending(path: "winemac.so"))
+    let result = try check(engine)
+    #expect(result.code != 0)
+    #expect(result.output.contains("focus-fixed"), "\(result.output)")
+}

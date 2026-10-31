@@ -77,6 +77,8 @@ public struct SteamStore: Sendable {
     let engines: EngineStore
     let installer: URL
     let engineId: String?
+    /// Says which engine replaces the bottle's own; a fresh Steam start moves the bottle there.
+    let manifest: EngineManifest?
     let macSteam: @Sendable () -> Bool
     /// How long `tasklist` and `-shutdown` may take before the session counts as stuck.
     let commandTimeout: Duration
@@ -86,6 +88,7 @@ public struct SteamStore: Sendable {
 
     public init(paths: CellarPaths, bottles: BottleStore, engines: EngineStore,
                 installer: URL = SteamStore.installerURL, engineId: String? = nil,
+                manifest: EngineManifest? = try? EngineManifest.bundled(),
                 macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning,
                 commandTimeout: Duration = .seconds(15),
                 windowWait: Duration = .seconds(45), pollInterval: Duration = .seconds(2)) {
@@ -94,6 +97,7 @@ public struct SteamStore: Sendable {
         self.engines = engines
         self.installer = installer
         self.engineId = engineId
+        self.manifest = manifest
         self.macSteam = macSteam
         self.commandTimeout = commandTimeout
         self.windowWait = windowWait
@@ -212,6 +216,8 @@ public struct SteamStore: Sendable {
             // Always end the session first: the check above ran headless (no display driver), and a
             // Steam started inside that session would get no window.
             try await bottles.kill(name)
+            // Nothing runs in the bottle now, so it can move to a newer build of its engine.
+            if let manifest { _ = try await bottles.moveToNewerEngine(name, manifest: manifest) }
         } catch WineRunnerError.timedOut {
             // The session doesn't answer: it's stuck.
             try await bottles.kill(name)
