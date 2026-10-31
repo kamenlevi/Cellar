@@ -84,3 +84,11 @@ private func report(frames: FrameStats? = FrameStats(frames: 14_400, seconds: 12
     #expect(check.automaticVerdict == "PASS (automatic part)")
     #expect(check.markdown().contains("muted"))
 }
+
+@Test func aWrittenReportHasItsJSONBesideIt() throws {
+    // M4's engine comparison reads these.
+    let tmp = try TempRoot()
+    let md = try report().write(to: tmp.url)
+    let json = md.deletingPathExtension().appendingPathExtension("json")
+    #expect(try JSONDecoder.cellar.decode(CheckReport.self, from: Data(contentsOf: json)) == report())
+}

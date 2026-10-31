@@ -13,7 +13,7 @@ public struct HUDSample: Equatable, Sendable {
 
 /// Frame rate from the Metal HUD log. The HUD's per-frame times are `<private>` in the system log, so everything here
 /// comes from frame-count deltas between samples (docs/m2-spike.md).
-public struct FrameStats: Equatable, Sendable {
+public struct FrameStats: Codable, Equatable, Sendable {
     public var frames: Int
     public var seconds: Double
     public var averageFPS: Double

@@ -27,7 +27,7 @@ struct Cellar: AsyncParsableCommand {
         commandName: "cellar",
         abstract: "Run Windows games on this Mac.",
         version: "cellar 0.0.1 (M0)",
-        subcommands: [DoctorCommand.self, Play.self, Check.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
+        subcommands: [DoctorCommand.self, Play.self, Check.self, Compare.self, SteamCommand.self, EngineCommand.self, BottleCommand.self, Run.self, D3DMetalCommand.self]
     )
 }
 
@@ -312,6 +312,27 @@ struct Play: AsyncParsableCommand {
             if restartedSteam { print("Steam didn't respond to the launch, so Cellar restarted it; \(profile.name) is starting now.") }
         case .broughtForward: print("\(profile.name) is already running; bringing it forward.")
         }
+    }
+}
+
+struct Compare: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Compare one game's check reports on a candidate engine against the current one.",
+        discussion: "Each report's .json sits beside its .md. Exits 1 when anything is worse.")
+    @Option(parsing: .upToNextOption, help: "Reports from the current engine (two or more).") var baseline: [String]
+    @Option(parsing: .upToNextOption, help: "Reports from the candidate engine.") var candidate: [String]
+
+    func run() throws {
+        guard baseline.count >= 2, !candidate.isEmpty else {
+            throw ValidationError("Give at least two --baseline reports and one --candidate report.")
+        }
+        func load(_ paths: [String]) throws -> [CheckReport] {
+            try paths.map { try JSONDecoder.cellar.decode(CheckReport.self, from: Data(contentsOf: URL(filePath: $0))) }
+        }
+        let findings = EngineComparison.verdict(baseline: try load(baseline), candidate: try load(candidate))
+        if findings.isEmpty { print("nothing worse"); return }
+        for f in findings { print("\(f.game): \(f.what) worse: \(f.baseline) → \(f.candidate)") }
+        throw ExitCode(1)
     }
 }
 

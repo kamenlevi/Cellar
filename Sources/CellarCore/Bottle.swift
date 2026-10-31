@@ -31,7 +31,7 @@ public struct BottleInfo: Codable, Sendable, Equatable {
 }
 
 extension JSONDecoder {
-    static var cellar: JSONDecoder {
+    public static var cellar: JSONDecoder {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
         return d
@@ -39,7 +39,7 @@ extension JSONDecoder {
 }
 
 extension JSONEncoder {
-    static var cellar: JSONEncoder {
+    public static var cellar: JSONEncoder {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
         e.outputFormatting = [.prettyPrinted, .sortedKeys]

@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 /// The automatic part of the spec's per-game checklist (section 4), measured on a real run.
-public struct CheckReport: Sendable {
+public struct CheckReport: Codable, Equatable, Sendable {
     public var game: GameProfile
     public var renderer: Renderer
     public var seconds: Int
@@ -86,6 +86,7 @@ public struct CheckReport: Sendable {
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"
         let file = folder.appending(path: "\(game.id)-\(formatter.string(from: startedAt)).md")
         try Data(markdown().utf8).write(to: file)
+        try JSONEncoder.cellar.encode(self).write(to: file.deletingPathExtension().appendingPathExtension("json"))
         return file
     }
 }
