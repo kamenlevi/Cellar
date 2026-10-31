@@ -15,8 +15,11 @@ SOURCE="crossover-sources-$CX_VERSION.tar.gz"
 SOURCE_URL="https://media.codeweavers.com/pub/crossover/source/$SOURCE"
 SOURCE_SHA="7cdcfcfaee8991f7958b5ccb2837c0facec6e8e681cd3ada8d2745bddbe27d13"
 TEMPLATE_ASSET="Template-1.0.11.tar.xz"
-MONO_VERSION="9.4.0"     # dlls/appwiz.cpl/addons.c in this source
-GECKO_VERSION="2.47.4"
+TEMPLATE_SHA="9fa15479e7ff6abd99c1d07be285fb95f41fc6991586502427152b1f7d6ccb8a"
+# Wine Mono 9.4.0 and Gecko 2.47.4 (the versions dlls/appwiz.cpl/addons.c asks for) come from Cellar's own c2 engine
+# release: the same files as today's engine, pinned by engines.json's checksum. WineHQ publishes no checksums for them.
+ADDONS_FROM="sikarugir-10.0_6-c2"
+ADDONS_SHA="e16805a0368f1716d3a212b8b4528f37169be3d62271bd9d08065e9b63d9857f"
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 work="${1:?usage: build-engine.sh <workdir>}"
@@ -31,10 +34,10 @@ cd "$work/dl"
 [ -f "$SOURCE" ] || curl -fL --retry 3 -o "$SOURCE" "$SOURCE_URL"
 [ "$(shasum -a 256 "$SOURCE" | awk '{print $1}')" = "$SOURCE_SHA" ] || { echo "$SOURCE: wrong checksum" >&2; exit 1; }
 gh release download v1.0 -R Sikarugir-App/Wrapper -p "$TEMPLATE_ASSET" --skip-existing
-for f in "wine-mono-$MONO_VERSION-x86.tar.xz" "wine-gecko-$GECKO_VERSION-x86.tar.xz" "wine-gecko-$GECKO_VERSION-x86_64.tar.xz"; do
-    case "$f" in wine-mono*) dir=mono/$MONO_VERSION ;; *) dir=gecko/$GECKO_VERSION ;; esac
-    [ -f "$f" ] || curl -fL --retry 3 -o "$f" "https://dl.winehq.org/wine/wine-$dir/$f"
-done
+[ "$(shasum -a 256 "$TEMPLATE_ASSET" | awk '{print $1}')" = "$TEMPLATE_SHA" ] || { echo "$TEMPLATE_ASSET: wrong checksum" >&2; exit 1; }
+addons="cellar-engine-$ADDONS_FROM.tar.xz"
+gh release download "engine-$ADDONS_FROM" -R kamenlevi/Cellar -p "$addons" --skip-existing
+[ "$(shasum -a 256 "$addons" | awk '{print $1}')" = "$ADDONS_SHA" ] || { echo "$addons: wrong checksum" >&2; exit 1; }
 
 rm -rf "$work/src" && mkdir -p "$work/src"
 tar -xzf "$SOURCE" -C "$work/src"
@@ -85,8 +88,8 @@ for item in "$frameworks"/*; do
     cp -R "$item" "$out/Frameworks/"
 done
 for r in dxvk d9vk dxmt; do cp -R "$frameworks/renderer/$r" "$out/renderer/$r"; done
-tar -xJf "$work/dl/wine-mono-$MONO_VERSION-x86.tar.xz" -C "$out/wine/share/wine/mono"
-for a in x86 x86_64; do tar -xJf "$work/dl/wine-gecko-$GECKO_VERSION-$a.tar.xz" -C "$out/wine/share/wine/gecko"; done
+tar -xJf "$work/dl/$addons" -C "$out/wine/share/wine" --strip-components 4 \
+    "$ADDONS_FROM/wine/share/wine/mono" "$ADDONS_FROM/wine/share/wine/gecko"
 
 patches=$(cd "$repo/engine/patches/crossover-$CX_VERSION" && ls *.patch | sed 's/.*/"&"/' | paste -sd, -)
 cat > "$out/ENGINE.json" <<JSON
@@ -95,7 +98,7 @@ cat > "$out/ENGINE.json" <<JSON
   "wineVersion": "$(cat "$wine_src/VERSION" | sed 's/Wine version //') (CrossOver $CX_VERSION)",
   "source": "$SOURCE",
   "patches": [$patches],
-  "sources": { "template": "$TEMPLATE_ASSET", "mono": "$MONO_VERSION", "gecko": "$GECKO_VERSION" },
+  "sources": { "template": "$TEMPLATE_ASSET", "monoAndGecko": "engine-$ADDONS_FROM" },
   "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON
