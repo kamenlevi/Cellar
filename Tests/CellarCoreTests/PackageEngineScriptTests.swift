@@ -108,6 +108,18 @@ private func sourceBuiltEngine(_ tmp: TempRoot, ntdll markers: [String], monoAnd
     #expect(result.code == 0, "\(result.output)")
 }
 
+@Test func checkAllowsHomebrewTextInsideAWindowsDLL() throws {
+    // A Windows DLL can't load a Mac library; a Homebrew path in one is only text (a mingw header's file name).
+    let tmp = try TempRoot()
+    let engine = try sourceBuiltEngine(tmp, ntdll: ["CX_APPLEGPTK_LIBD3DSHARED_PATH", "WINEDLLPATH_PREPEND"])
+    let windows = engine.appending(path: "wine/lib/wine/x86_64-windows")
+    try FileManager.default.createDirectory(at: windows, withIntermediateDirectories: true)
+    try Data("MZ\u{0}/usr/local/Cellar/mingw-w64/13.0.0/include/assert.h\u{0}".utf8).write(to: windows.appending(path: "xaudio2_9.dll"))
+    let result = try check(engine)
+    #expect(result.code == 0, "\(result.output)")
+    #expect(result.output.contains("/usr/local/Cellar/mingw-w64/13.0.0/include/assert.h"), "the text is still shown: \(result.output)")
+}
+
 @Test func checkRefusesALibraryThatPointsIntoHomebrew() throws {
     // A source build links against Homebrew on the build machine; a path left behind breaks on Kamen's Mac.
     let tmp = try TempRoot()

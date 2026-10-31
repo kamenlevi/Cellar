@@ -105,9 +105,13 @@ check() {
             || { echo "Wine Mono or Gecko is missing"; missing=1; }
     fi
     # A source build links against Homebrew on the build machine; a path left behind breaks on any other Mac.
-    local brew
-    brew=$(grep -rlaE '/usr/local/(opt|Cellar)/|/opt/homebrew/' "$root/wine" "$root/Frameworks" 2>/dev/null | sed "s|^$root/|  |" || true)
+    # Windows-side files (*-windows) can't load a Mac library, so a Homebrew path in one is only text: shown, not refused.
+    local brew pattern='/usr/local/(opt|Cellar)/|/opt/homebrew/'
+    brew=$(grep -rlaE "$pattern" "$root/wine" "$root/Frameworks" 2>/dev/null | grep -v -- '-windows/' | sed "s|^$root/|  |" || true)
     if [ -n "$brew" ]; then echo "files that point into Homebrew:"; echo "$brew"; missing=1; fi
+    local text
+    text=$(grep -rhaoE "($pattern)[[:print:]]*" "$root/wine/lib/wine"/*-windows 2>/dev/null | sort -u | head -20 || true)
+    if [ -n "$text" ]; then echo "Homebrew paths as text in Windows-side files (not loaded):"; echo "$text" | sed 's/^/  /'; fi
     [ $missing = 0 ] && echo "all dependencies resolve"
     return $missing
 }

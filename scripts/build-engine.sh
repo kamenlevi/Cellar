@@ -57,7 +57,8 @@ echo "$distversion" > "$wine_src/programs/winedbg/distversion.h"   # where maked
 # --- Build -----------------------------------------------------------------------------------------------------
 brew_prefix="$(brew --prefix)"
 export PATH="$brew_prefix/opt/bison/bin:$brew_prefix/opt/flex/bin:$PATH"
-export PKG_CONFIG_PATH="$brew_prefix/lib/pkgconfig:$brew_prefix/opt/gnutls/lib/pkgconfig:$brew_prefix/opt/freetype/lib/pkgconfig"
+# FFmpeg 7 (libavcodec.61), the major version the template ships, ahead of Homebrew's newest.
+export PKG_CONFIG_PATH="$brew_prefix/opt/ffmpeg@7/lib/pkgconfig:$brew_prefix/lib/pkgconfig:$brew_prefix/opt/gnutls/lib/pkgconfig:$brew_prefix/opt/freetype/lib/pkgconfig"
 export CPPFLAGS="-I$brew_prefix/include"
 export LDFLAGS="-L$brew_prefix/lib"
 export MACOSX_DEPLOYMENT_TARGET=11.0
@@ -80,6 +81,7 @@ cd "$work/build"
     --with-coreaudio --with-freetype --with-gnutls --with-gstreamer --with-sdl --with-vulkan \
     --without-x --without-oss --without-alsa --without-pulse --without-cups --without-sane --without-gphoto \
     --without-krb5 --without-netapi --without-pcap --without-v4l2 --without-wayland --without-dbus \
+    --without-usb \
     --disable-tests \
     ${cross[@]+"${cross[@]}"} \
     ac_cv_lib_soname_odbc=   # as in engine c2: Wine asks for plain libodbc.dylib, and works without it
@@ -97,6 +99,34 @@ while read -r soname; do
     [[ " $optional " == *" $soname "* ]] || [ -e "$frameworks/$soname" ] || [ -e "/usr/lib/$soname" ] || [ -e "/System/Library/Frameworks/${soname%%.*}.framework" ] \
         || { echo "Wine opens $soname, which the template doesn't ship"; missing=1; }
 done < <(sed -n 's/^#define SONAME_LIB[A-Z0-9_]* "\(.*\)"$/\1/p' include/config.h)
+[ $missing = 0 ] || exit 1
+
+# Wine's media parts (winegstreamer, winedmo) link GStreamer, GLib and FFmpeg at build time, by Homebrew's paths. At run
+# time they must load the template's copies, as engine c2's do: by @rpath, found through DYLD_FALLBACK_LIBRARY_PATH
+# (WineEnvironment). Each such library must be in the template, and export every symbol Wine takes from it.
+template_libs="$frameworks/GStreamer.framework/Versions/1.0/lib"
+# The symbols a Mach-O file takes from a library. nm names the library by a shortened leaf ("libgstreamer-1",
+# "libavcodec.61"), so it is matched as a prefix of the library's file name.
+imports_from() {
+    nm -m "$1" | sed -n 's/.*(undefined) .*external \([^ ]*\) (from \(.*\))$/\1 \2/p' \
+        | awk -v lib="$2" 'index(lib, $2) == 1 && $2 !~ /^@/ { print $1 }' | sort -u
+}
+while read -r macho; do
+    relinked=0
+    while read -r dep; do
+        name=$(basename "$dep")
+        shipped=""
+        for d in "$frameworks" "$template_libs"; do [ -e "$d/$name" ] && shipped="$d/$name" && break; done
+        [ -n "$shipped" ] || { echo "${macho#$out/} links Homebrew's $name, which the template doesn't ship"; missing=1; continue; }
+        needed=$(imports_from "$macho" "$name")
+        [ -n "$needed" ] || { echo "${macho#$out/}: can't read what it takes from $name"; missing=1; continue; }
+        lacking=$(comm -23 <(echo "$needed") <(nm -gUj "$shipped" | sort -u))
+        [ -z "$lacking" ] || { echo "${macho#$out/} needs from $name what the template's copy lacks:"; echo "$lacking" | head -20; missing=1; }
+        install_name_tool -change "$dep" "@rpath/$name" "$macho" 2>/dev/null
+        relinked=1
+    done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}' | grep -E '^(/usr/local/|/opt/homebrew/)' || true)
+    [ $relinked = 0 ] || codesign -f -s - "$macho" 2>/dev/null
+done < <(find "$out/wine" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
 [ $missing = 0 ] || exit 1
 
 # --- Assemble (the same layout as package-engine.sh's) ----------------------------------------------------------

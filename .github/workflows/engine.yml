@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build tools
-        run: brew install mingw-w64 bison flex pkgconf ccache freetype gnutls sdl2 molten-vk gstreamer
+        run: brew install mingw-w64 bison flex pkgconf ccache freetype gnutls sdl2 molten-vk gstreamer ffmpeg@7
       - uses: actions/cache/restore@v4
         with:
           path: ~/Library/Caches/ccache
