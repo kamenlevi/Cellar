@@ -75,17 +75,20 @@ cd "$work/build"
     --with-coreaudio --with-freetype --with-gnutls --with-gstreamer --with-sdl --with-vulkan \
     --without-x --without-oss --without-alsa --without-pulse --without-cups --without-sane --without-gphoto \
     --without-krb5 --without-netapi --without-pcap --without-v4l2 --without-wayland --without-dbus \
-    --disable-tests
+    --disable-tests \
+    ac_cv_lib_soname_odbc=   # as in engine c2: Wine asks for plain libodbc.dylib, and works without it
 make -j"$jobs"
 make install-lib
 
-# Every library Wine opens by name at run time must be one the engine ships (Sikarugir's template).
+# Every library Wine opens by name at run time must be one the engine ships (Sikarugir's template), or one engine c2
+# also asks for without shipping it (Wine runs on without it).
+optional="libodbc.dylib"
 template="$work/template" && rm -rf "$template" && mkdir -p "$template"
 tar -xJf "$work/dl/$TEMPLATE_ASSET" -C "$template"
 frameworks=$(find "$template" -maxdepth 3 -type d -path '*/Contents/Frameworks' | head -1)
 missing=0
 while read -r soname; do
-    [ -e "$frameworks/$soname" ] || [ -e "/usr/lib/$soname" ] || [ -e "/System/Library/Frameworks/${soname%%.*}.framework" ] \
+    [[ " $optional " == *" $soname "* ]] || [ -e "$frameworks/$soname" ] || [ -e "/usr/lib/$soname" ] || [ -e "/System/Library/Frameworks/${soname%%.*}.framework" ] \
         || { echo "Wine opens $soname, which the template doesn't ship"; missing=1; }
 done < <(sed -n 's/^#define SONAME_LIB[A-Z0-9_]* "\(.*\)"$/\1/p' include/config.h)
 [ $missing = 0 ] || exit 1
