@@ -48,11 +48,10 @@ for p in "$repo"/engine/patches/crossover-$CX_VERSION/*.patch; do
 done
 
 # CrossOver's own build generates include/distversion.h; winedbg's crash dialog needs its two messages.
-cat > "$wine_src/include/distversion.h" <<'H'
-/* Written by Cellar's scripts/build-engine.sh (CrossOver's build generates this file). */
-#define WINDEBUG_WHAT_HAPPENED_MESSAGE "This program crashed in Cellar's Wine engine."
-#define WINDEBUG_USER_SUGGESTION_MESSAGE "The details below can help find out why."
-H
+distversion='/* Written by Cellar'"'"'s scripts/build-engine.sh (CrossOver'"'"'s build generates this file). */
+#define WINDEBUG_WHAT_HAPPENED_MESSAGE "This program crashed in Cellar'"'"'s Wine engine."
+#define WINDEBUG_USER_SUGGESTION_MESSAGE "The details below can help find out why."'
+echo "$distversion" > "$wine_src/include/distversion.h"
 
 # --- Build -----------------------------------------------------------------------------------------------------
 brew_prefix="$(brew --prefix)"
@@ -64,7 +63,9 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 command -v ccache >/dev/null && export CC="ccache clang" CXX="ccache clang++"
 
 out="$work/out/$ENGINE_ID"
-rm -rf "$out" "$work/build" && mkdir -p "$out" "$work/build"
+rm -rf "$out" "$work/build" && mkdir -p "$out" "$work/build/include"
+# Wine's dependency scanner looks for generated headers in the build tree.
+echo "$distversion" > "$work/build/include/distversion.h"
 cd "$work/build"
 "$wine_src/configure" \
     --prefix="$out/wine" \
