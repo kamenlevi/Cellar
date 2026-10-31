@@ -123,17 +123,22 @@ Each one ends with something Kamen can try, and none starts until he has signed 
 - ANIMAL WELL keeps passing.
 - **Done when:** every target game has been played and signed off by Kamen.
 
-**M4 — Automatic for new games.**
+**M4 — Cellar's own engine, and real macOS fullscreen.** (Added 2026-10-31; design in `docs/superpowers/specs/2026-10-31-m4-own-engine-native-fullscreen-design.md`.)
+- Phase A: Cellar builds its own Wine engine from CodeWeavers' public CrossOver source, matching the engine before it on every game.
+- Phase B: every game opens straight into its own macOS desktop (Space), like a native Mac game.
+- **Done when:** both phases are signed off by Kamen, with nothing worse than before.
+
+**M5 — Automatic for new games.**
 - Given any Steam appid Kamen owns, Cellar picks the settings itself (graphics path from the executable, known fixes from PCGamingWiki/ProtonDB data where useful) and predicts a status: Ready / Should run / Needs work / Won't run.
 - **Done when:** three games from his "for later" list that Cellar has never seen work on the first try, or are correctly marked "Needs work" / "Won't run".
 
-**M5 — Built to last.**
+**M6 — Built to last.**
 - Engine upgrades on Kamen's terms: try the new engine on a copy of a bottle, run the checks, then switch.
 - Saves are backed up outside the bottle.
 - Recovery from crashes and stuck state.
 - **Done when:** a Steam update and an engine upgrade both go through without breaking any target game.
 
-**M6 — The app.**
+**M7 — The app.**
 - The SwiftUI app with the three library views over everything above.
 - Kamen's own UI ideas (not yet collected — see section 9) are designed in this milestone.
 - **Done when:** Kamen uses the app instead of the command line.
