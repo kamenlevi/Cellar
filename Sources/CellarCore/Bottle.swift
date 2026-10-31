@@ -5,6 +5,8 @@ public enum BottleError: Error, Equatable {
     case exists(String)
     case notFound(String)
     case setupFailed(String)
+    /// Wine is running in this bottle, so it can't be copied consistently.
+    case inUse(String)
 }
 
 /// A bottle name that is safe to use as a folder name.
@@ -126,6 +128,51 @@ public struct BottleStore: Sendable {
         let cwd = URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory)
         let url = URL(filePath: program, relativeTo: cwd).standardizedFileURL
         return try await runner.wine([url.path] + arguments, cwd: url.deletingLastPathComponent())
+    }
+
+    /// Where Wine keeps its server sockets: `/tmp/.wine-<uid>`.
+    public static var defaultWineServers: URL { URL(filePath: "/tmp/.wine-\(getuid())", directoryHint: .isDirectory) }
+
+    /// The folder holding the Wine server socket of the session using `prefix`, named, as Wine names it, after the
+    /// prefix folder's device and inode numbers.
+    public static func wineServerFolder(for prefix: URL, in root: URL) -> URL {
+        let st = (try? FileManager.default.attributesOfItem(atPath: prefix.path)) ?? [:]
+        let dev = (st[.systemNumber] as? NSNumber)?.uint64Value ?? 0
+        let ino = (st[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+        return root.appending(path: "server-\(String(dev, radix: 16))-\(String(ino, radix: 16))", directoryHint: .isDirectory)
+    }
+
+    /// Whether a Wine session runs in the bottle (its server socket exists). Starts nothing.
+    public func isRunning(_ name: BottleName, wineServers: URL = BottleStore.defaultWineServers) -> Bool {
+        let prefix = paths.bottle(name.value).appending(path: "prefix", directoryHint: .isDirectory)
+        return FileManager.default.fileExists(atPath: Self.wineServerFolder(for: prefix, in: wineServers).appending(path: "socket").path)
+    }
+
+    /// Copies a bottle as an APFS clone (`cp -c`): it costs no disk until one of the two changes, and changing one never
+    /// changes the other.
+    public func clone(_ source: BottleName, to target: BottleName,
+                      wineServers: URL = BottleStore.defaultWineServers) throws -> BottleInfo {
+        var info = try info(source)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: paths.bottle(target.value).path) { throw BottleError.exists(target.value) }
+        if isRunning(source, wineServers: wineServers) { throw BottleError.inUse(source.value) }
+        let cp = Process()
+        cp.executableURL = URL(filePath: "/bin/cp")
+        cp.arguments = ["-c", "-R", paths.bottle(source.value).path, paths.bottle(target.value).path]
+        try cp.run()
+        cp.waitUntilExit()
+        guard cp.terminationStatus == 0 else { throw BottleError.setupFailed("cp -c exited \(cp.terminationStatus)") }
+        info.name = target.value
+        try JSONEncoder.cellar.encode(info).write(to: infoFile(target), options: .atomic)
+        return info
+    }
+
+    /// Points the bottle at another installed engine.
+    public func setEngine(_ name: BottleName, to engineId: String) throws {
+        var info = try info(name)
+        guard try engines.installedEngine(id: engineId) != nil else { throw EngineError.notInstalled(engineId) }
+        info.engineId = engineId
+        try JSONEncoder.cellar.encode(info).write(to: infoFile(name), options: .atomic)
     }
 
     /// Moves the bottle to the engine that replaces its own (same Wine, with fixes), installing it if needed.

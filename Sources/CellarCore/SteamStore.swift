@@ -10,6 +10,8 @@ public enum SteamError: Error, Equatable {
     case signedInElsewhere
     /// Signed out from elsewhere, but restarting Steam would kill this program (a game) running in its bottle.
     case signedOutWhileGameRuns(String)
+    /// Steam runs in another bottle (a clone being tested): two Steams on one account sign each other out.
+    case anotherSteamRuns(String)
 }
 
 public struct SteamStatus: Equatable, Sendable {
@@ -79,6 +81,9 @@ public struct SteamStore: Sendable {
     let engines: EngineStore
     let installer: URL
     let engineId: String?
+    /// The bottle this Steam lives in: "Steam", or a clone of it while an engine is tested.
+    let bottle: String
+    let wineServers: URL
     /// Says which engine replaces the bottle's own; a fresh Steam start moves the bottle there.
     let manifest: EngineManifest?
     /// Lines for the person running Cellar (a one-time engine download).
@@ -92,6 +97,7 @@ public struct SteamStore: Sendable {
 
     public init(paths: CellarPaths, bottles: BottleStore, engines: EngineStore,
                 installer: URL = SteamStore.installerURL, engineId: String? = nil,
+                bottle: String = SteamStore.bottleName, wineServers: URL = BottleStore.defaultWineServers,
                 manifest: EngineManifest? = try? EngineManifest.bundled(),
                 announce: @escaping @Sendable (String) -> Void = { _ in },
                 macSteam: @escaping @Sendable () -> Bool = MacSteam.isRunning,
@@ -102,6 +108,8 @@ public struct SteamStore: Sendable {
         self.engines = engines
         self.installer = installer
         self.engineId = engineId
+        self.bottle = bottle
+        self.wineServers = wineServers
         self.manifest = manifest
         self.announce = announce
         self.macSteam = macSteam
@@ -110,10 +118,10 @@ public struct SteamStore: Sendable {
         self.pollInterval = pollInterval
     }
 
-    var name: BottleName { try! BottleName(Self.bottleName) }
+    var name: BottleName { try! BottleName(bottle) }
 
     public var steamFolder: URL {
-        paths.bottle(Self.bottleName).appending(path: "prefix/drive_c/Program Files (x86)/Steam", directoryHint: .isDirectory)
+        paths.bottle(bottle).appending(path: "prefix/drive_c/Program Files (x86)/Steam", directoryHint: .isDirectory)
     }
 
     /// Valve ships "steam.exe"; some setups show "Steam.exe".
@@ -129,7 +137,7 @@ public struct SteamStore: Sendable {
 
     public func install() async throws {
         if isInstalled() { return }
-        if try !bottles.list().contains(where: { $0.name == Self.bottleName }) {
+        if try !bottles.list().contains(where: { $0.name == bottle }) {
             _ = try await bottles.create(name, engineId: engineId)
         }
         let fm = FileManager.default
@@ -200,6 +208,7 @@ public struct SteamStore: Sendable {
     /// `muted` starts Steam with no sound driver, and so every game it launches: nothing can make a sound on this Mac.
     public func start(muted: Bool = false) async throws -> StartOutcome {
         guard isInstalled() else { throw SteamError.notInstalled }
+        if let other = try await steamRunningElsewhere() { throw SteamError.anotherSteamRuns(other) }
         var outcome: StartOutcome
         do {
             let running = try await processes()
@@ -241,6 +250,18 @@ public struct SteamStore: Sendable {
         throw SteamError.noWindow
     }
 
+    /// The other bottle whose Steam runs, if any. Only bottles with a live Wine session are asked, so nothing starts.
+    private func steamRunningElsewhere() async throws -> String? {
+        for other in try bottles.list() where other.name != bottle {
+            let name = try BottleName(other.name)
+            guard bottles.isRunning(name, wineServers: wineServers) else { continue }
+            let result = try? await bottles.runner(for: name, mode: .headless)
+                .wine(["tasklist", "/fo", "csv", "/nh"], timeout: commandTimeout)
+            if result?.output.lowercased().contains("\"steam.exe\"") == true { return other.name }
+        }
+        return nil
+    }
+
     /// Best effort: offline or with GitHub down, Steam still starts on the engine it has.
     private func moveToNewerEngine(_ manifest: EngineManifest) async {
         guard let current = try? bottles.info(name).engineId, let entry = manifest.replacement(for: current) else { return }
@@ -278,7 +299,7 @@ public struct SteamStore: Sendable {
     /// The DLL override that leaves a program with no sound driver at all.
     static let noSound = "winecoreaudio.drv=d"
 
-    private var rendererFile: URL { paths.bottle(Self.bottleName).appending(path: "steam-renderer") }
+    private var rendererFile: URL { paths.bottle(bottle).appending(path: "steam-renderer") }
 
     /// The renderer of the games Steam launches, when Cellar started this Steam (nil after a stop, or never started).
     public var gameRenderer: Renderer? {

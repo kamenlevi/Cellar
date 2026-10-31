@@ -166,3 +166,67 @@ private func manifest(_ entries: [(id: String, replaces: [String])]) -> EngineMa
     #expect(try await rig.store.moveToNewerEngine(name, manifest: manifest([("other", ["older"]), ("fake", [])])) == nil)
     #expect(try rig.store.info(name).engineId == "fake")
 }
+
+// MARK: - M4: clones and engine choice
+
+@Test func aCloneIsIndependentOfItsSource() async throws {
+    let rig = try Rig()
+    let steam = try BottleName("Steam"), copy = try BottleName("Steam-m4")
+    _ = try await rig.store.create(steam, engineId: "fake")
+    let file = "prefix/drive_c/users/kamen/save.dat"
+    let original = rig.tmp.paths.bottle("Steam").appending(path: file)
+    try FileManager.default.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("before".utf8).write(to: original)
+    let info = try rig.store.clone(steam, to: copy)
+    #expect(info.name == "Steam-m4")
+    #expect(info.engineId == "fake")
+    try Data("changed in the clone".utf8).write(to: rig.tmp.paths.bottle("Steam-m4").appending(path: file))
+    #expect(try String(contentsOf: original, encoding: .utf8) == "before")
+    #expect(try rig.store.info(steam).name == "Steam")
+}
+
+@Test func cloningOntoAnExistingBottleIsRefused() async throws {
+    let rig = try Rig()
+    _ = try await rig.store.create(try BottleName("Steam"), engineId: "fake")
+    _ = try await rig.store.create(try BottleName("Steam-m4"), engineId: "fake")
+    #expect(throws: BottleError.exists("Steam-m4")) { try rig.store.clone(try BottleName("Steam"), to: try BottleName("Steam-m4")) }
+}
+
+@Test func setEngineNeedsTheEngineInstalled() async throws {
+    let rig = try Rig()
+    let name = try BottleName("Steam-m4")
+    _ = try await rig.store.create(name, engineId: "fake")
+    #expect(throws: EngineError.notInstalled("missing")) { try rig.store.setEngine(name, to: "missing") }
+    try FakeEngine.installed(id: "crossover-25.1.1-c1", in: rig.tmp.paths.engines)
+    try rig.store.setEngine(name, to: "crossover-25.1.1-c1")
+    #expect(try rig.store.info(name).engineId == "crossover-25.1.1-c1")
+}
+
+@Test func anEngineThatReplacesNothingMovesNoBottle() async throws {
+    let rig = try Rig()
+    let name = try BottleName("Steam")
+    _ = try await rig.store.create(name, engineId: "fake")
+    try FakeEngine.installed(id: "crossover-25.1.1-c1", in: rig.tmp.paths.engines)
+    #expect(try await rig.store.moveToNewerEngine(name, manifest: manifest([("fake", []), ("crossover-25.1.1-c1", [])])) == nil)
+    #expect(try rig.store.info(name).engineId == "fake")
+}
+
+@Test func cloningARunningBottleIsRefused() async throws {
+    let rig = try Rig()
+    let steam = try BottleName("Steam")
+    _ = try await rig.store.create(steam, engineId: "fake")
+    let servers = rig.tmp.url.appending(path: "wine-servers")
+    let socketDir = BottleStore.wineServerFolder(for: rig.tmp.paths.bottle("Steam").appending(path: "prefix"), in: servers)
+    try FileManager.default.createDirectory(at: socketDir, withIntermediateDirectories: true)
+    try Data().write(to: socketDir.appending(path: "socket"))
+    #expect(throws: BottleError.inUse("Steam")) { try rig.store.clone(steam, to: try BottleName("Steam-m4"), wineServers: servers) }
+}
+
+@Test func theWineServerFolderIsNamedAsWineNamesIt() throws {
+    // Wine: /tmp/.wine-<uid>/server-<st_dev hex>-<st_ino hex>, for the prefix folder.
+    let tmp = try TempRoot()
+    let st = try FileManager.default.attributesOfItem(atPath: tmp.url.path)
+    let dev = String((st[.systemNumber] as! NSNumber).uint64Value, radix: 16)
+    let ino = String((st[.systemFileNumber] as! NSNumber).uint64Value, radix: 16)
+    #expect(BottleStore.wineServerFolder(for: tmp.url, in: URL(filePath: "/tmp/.wine-501")).path == "/tmp/.wine-501/server-\(dev)-\(ino)")
+}

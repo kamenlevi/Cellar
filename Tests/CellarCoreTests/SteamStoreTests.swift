@@ -54,11 +54,16 @@ private struct SteamRig {
         bottles = BottleStore(paths: tmp.paths, engines: engines, discard: TempRoot.discard)
     }
 
+    /// Where the fake Wine servers' sockets live (real Wine: /tmp/.wine-<uid>).
+    var wineServers: URL { tmp.url.appending(path: "wine-servers") }
+
     func store(installer: URL? = nil, macSteam: Bool = false, manifest: EngineManifest? = nil,
-               announce: @escaping @Sendable (String) -> Void = { _ in }) throws -> SteamStore {
+               announce: @escaping @Sendable (String) -> Void = { _ in },
+               bottle: String = SteamStore.bottleName) throws -> SteamStore {
         let source = try installer ?? fakeInstaller()
         return SteamStore(paths: tmp.paths, bottles: bottles, engines: engines,
-                          installer: source, engineId: "fake", manifest: manifest, announce: announce,
+                          installer: source, engineId: "fake", bottle: bottle, wineServers: wineServers,
+                          manifest: manifest, announce: announce,
                           macSteam: { macSteam }, commandTimeout: .seconds(2),
                           windowWait: .seconds(3), pollInterval: .milliseconds(200))
     }
@@ -90,8 +95,9 @@ private struct SteamRig {
     }
 
     func installedStore(macSteam: Bool = false, manifest: EngineManifest? = nil,
-                        announce: @escaping @Sendable (String) -> Void = { _ in }) async throws -> SteamStore {
-        let s = try store(macSteam: macSteam, manifest: manifest, announce: announce)
+                        announce: @escaping @Sendable (String) -> Void = { _ in },
+                        bottle: String = SteamStore.bottleName) async throws -> SteamStore {
+        let s = try store(macSteam: macSteam, manifest: manifest, announce: announce, bottle: bottle)
         try await s.install()
         try? FileManager.default.removeItem(at: calls)
         try? FileManager.default.removeItem(at: serverCalls)
@@ -432,4 +438,41 @@ private func writeConnectionLog(_ text: String, for steam: SteamStore) throws {
 @Test func signedInElsewhereErrorSaysWhatToDo() {
     #expect(SteamError.signedInElsewhere.errorDescription == "Steam is signed out, because your account signed in on Steam for Mac.")
     #expect(SteamError.signedInElsewhere.recoverySuggestion == "Quit Steam for Mac (Steam ▸ Quit Steam), then run: cellar steam")
+}
+
+// MARK: - M4: Steam on another bottle
+
+@Test func steamInAnotherBottleUsesThatPrefix() async throws {
+    let rig = try SteamRig()
+    let steam = try await rig.installedStore(bottle: "Steam-m4")
+    #expect(steam.steamExe.path.contains("/bottles/Steam-m4/prefix/"))
+    #expect(FileManager.default.fileExists(atPath: steam.steamExe.path))
+    #expect(!FileManager.default.fileExists(atPath: rig.tmp.paths.bottle("Steam").path))
+}
+
+@Test func steamWontStartWhileAnotherBottlesSteamRuns() async throws {
+    // Two Steams on one account sign each other out ("Session Replaced").
+    let rig = try SteamRig()
+    _ = try await rig.installedStore()
+    let clone = try await rig.installedStore(bottle: "Steam-m4")
+    let prefix = rig.tmp.paths.bottle("Steam").appending(path: "prefix")
+    try FileManager.default.createDirectory(at: BottleStore.wineServerFolder(for: prefix, in: rig.wineServers),
+                                            withIntermediateDirectories: true)
+    try Data().write(to: BottleStore.wineServerFolder(for: prefix, in: rig.wineServers).appending(path: "socket"))
+    try rig.setTasklist(["steam.exe", "steamwebhelper.exe"])
+    await #expect(throws: SteamError.anotherSteamRuns("Steam")) { try await clone.start() }
+    #expect(spawns(rig) == 0)
+}
+
+@Test func aStoppedSteamInAnotherBottleDoesNotBlock() async throws {
+    let rig = try SteamRig()
+    _ = try await rig.installedStore()
+    let clone = try await rig.installedStore(bottle: "Steam-m4")
+    #expect(try await clone.start() == .started)
+}
+
+@Test func anotherSteamRunsSaysWhatToDo() {
+    let e = SteamError.anotherSteamRuns("Steam")
+    #expect(e.errorDescription == "Steam is already running in the Steam bottle, and two Steams would sign each other out.")
+    #expect(e.recoverySuggestion == "Stop it first (cellar steam stop, with CELLAR_STEAM_BOTTLE=Steam), then try again.")
 }

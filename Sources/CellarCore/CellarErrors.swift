@@ -9,6 +9,7 @@ extension BottleError: LocalizedError {
         case .exists(let name): "A bottle called \"\(name)\" already exists."
         case .notFound(let name): "There is no bottle called \"\(name)\"."
         case .setupFailed(let reason): "Setting up the bottle failed (\(reason))."
+        case .inUse(let name): "Wine is running in the \(name) bottle, so it can't be copied now."
         }
     }
 
@@ -18,6 +19,7 @@ extension BottleError: LocalizedError {
         case .exists: "Pick another name, or run: cellar bottle list"
         case .notFound: "Run: cellar bottle list"
         case .setupFailed: "See the log in ~/Library/Logs/Cellar/"
+        case .inUse: "Stop what runs in it first (cellar steam stop, or cellar bottle kill <name>)."
         }
     }
 }
@@ -68,6 +70,8 @@ extension SteamError: LocalizedError {
         case .installFailed(let reason): "Steam's installer finished but Steam.exe isn't there (\(reason))."
         case .noWindow: "Steam started but its window never appeared, even after one automatic restart."
         case .signedInElsewhere: "Steam is signed out, because your account signed in on Steam for Mac."
+        case .anotherSteamRuns(let bottle):
+            "Steam is already running in the \(bottle) bottle, and two Steams would sign each other out."
         case .signedOutWhileGameRuns(let game):
             "Steam is signed out, because your account signed in somewhere else, and \(game) is still running in Steam's bottle."
         }
@@ -81,6 +85,7 @@ extension SteamError: LocalizedError {
         case .noWindow: "Run: cellar steam restart. If it keeps happening, the log is ~/Library/Logs/Cellar/Steam.log"
         case .signedInElsewhere: "Quit Steam for Mac (Steam ▸ Quit Steam), then run: cellar steam"
         case .signedOutWhileGameRuns(let game): "Quit \(game) from its own menu, then run: cellar steam"
+        case .anotherSteamRuns(let bottle): "Stop it first (cellar steam stop, with CELLAR_STEAM_BOTTLE=\(bottle)), then try again."
         }
     }
 }

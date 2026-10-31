@@ -41,11 +41,19 @@ struct EngineCommand: AsyncParsableCommand {
     struct Install: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Download and install an engine (the default one if no id is given).")
         @Argument var id: String?
+        @Option(help: "Install from a local tarball (an engine built but not yet published); needs the id and --sha256.")
+        var file: String?
+        @Option(help: "The tarball's SHA-256, as the build printed it.") var sha256: String?
 
         func run() async throws {
             let manifest = try EngineManifest.bundled()
             let entry: EngineEntry
-            if let id {
+            if let file {
+                guard let id, let sha256 else { throw ValidationError("--file needs the engine id and --sha256.") }
+                let url = URL(filePath: file).standardizedFileURL
+                let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+                entry = EngineEntry(id: id, wineVersion: "local build", url: url, sha256: sha256, size: size, isDefault: false)
+            } else if let id {
                 guard let match = manifest.engines.first(where: { $0.id == id }) else {
                     throw ValidationError("No engine called \(id). Known: \(manifest.engines.map(\.id).joined(separator: ", "))")
                 }
@@ -87,8 +95,29 @@ struct BottleCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "bottle",
         abstract: "Create and manage bottles (one Windows setup each).",
-        subcommands: [Create.self, List.self, Remove.self, Kill.self]
+        subcommands: [Create.self, List.self, Remove.self, Kill.self, Clone.self, Engine.self]
     )
+
+    struct Clone: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Copy a bottle as an APFS clone (no extra disk until one of them changes).")
+        @Argument var from: String
+        @Argument var to: String
+        func run() throws {
+            let info = try bottleStore().clone(BottleName(from), to: BottleName(to))
+            print("Cloned \"\(from)\" as \"\(info.name)\", on \(info.engineId).")
+        }
+    }
+
+    struct Engine: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Point a bottle at another installed engine.")
+        @Argument var bottle: String
+        @Argument(help: "An installed engine's id (cellar engine list).") var engine: String
+        func run() throws {
+            try bottleStore().setEngine(BottleName(bottle), to: engine)
+            print("The \"\(bottle)\" bottle now runs on \(engine).")
+        }
+    }
 
     struct Create: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Create a bottle.")
@@ -189,8 +218,10 @@ struct D3DMetalCommand: AsyncParsableCommand {
 func steamStore() -> SteamStore {
     let paths = CellarPaths()
     let engines = EngineStore(paths: paths)
+    // CELLAR_STEAM_BOTTLE runs Steam (and play, check) in another bottle: a clone where a new engine is tested.
+    let bottle = ProcessInfo.processInfo.environment["CELLAR_STEAM_BOTTLE"].flatMap { $0.isEmpty ? nil : $0 } ?? SteamStore.bottleName
     return SteamStore(paths: paths, bottles: BottleStore(paths: paths, engines: engines), engines: engines,
-                      announce: { print($0) })
+                      bottle: bottle, announce: { print($0) })
 }
 
 struct SteamCommand: AsyncParsableCommand {
