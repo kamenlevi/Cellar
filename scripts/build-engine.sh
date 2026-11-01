@@ -166,30 +166,35 @@ JSON
 # Smoke test, as Cellar runs Wine headless (no window or sound driver): set up a new bottle, then have one program start
 # another (cmd -> start -> cmd), the way Steam starts its helpers and games.
 # The variables go on each Wine command itself: macOS drops DYLD_* when a protected program such as /bin/bash starts.
-smoke="$work/smoke" && rm -rf "$smoke"
-headless() {
-    env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH="$out/wine/bin:/usr/bin:/bin" WINEPREFIX="$smoke" WINEDEBUG=fixme-all \
-        DYLD_FALLBACK_LIBRARY_PATH="$out/Frameworks:$out/Frameworks/GStreamer.framework/Versions/1.0/lib:$out/wine/lib/wine/x86_64-unix:/usr/lib" \
-        WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d;winemac.drv=d;winecoreaudio.drv=d" \
-        "$out/wine/bin/$1" "${@:2}"
-}
-# Into a file, not a pipe: a Wine process left running would hold a pipe open and the build would wait on it for good.
-# Time-boxed for the same reason: a hang fails the build with what was still running, instead of using up the job's time.
-said="$work/smoke.log"
-( headless wine wineboot --init && headless wine cmd /c "start /wait /b cmd /c echo cellar-smoke-ok"
-  headless wineserver -w ) >"$said" 2>&1 &
-smoking=$!
-for _ in $(seq "${SMOKE_SECONDS:-300}"); do kill -0 $smoking 2>/dev/null || break; sleep 1; done
-if kill -0 $smoking 2>/dev/null; then
-    echo "smoke test: still running after ${SMOKE_SECONDS:-300} s. Wine's processes then:"
-    ps -axo pid,etime,command | grep -E 'C:\\|wineserver|/wine/bin/' | grep -v grep | cut -c1-200 || echo "  (none)"
-    headless wineserver -k 2>/dev/null || true; kill $smoking 2>/dev/null || true
+# SMOKE_TEST=0 skips it where Wine can't run as on a Mac like Kamen's (the CI runner, see engine.yml).
+if [ "${SMOKE_TEST:-1}" = 1 ]; then
+    smoke="$work/smoke" && rm -rf "$smoke"
+    headless() {
+        env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH="$out/wine/bin:/usr/bin:/bin" WINEPREFIX="$smoke" WINEDEBUG=fixme-all \
+            DYLD_FALLBACK_LIBRARY_PATH="$out/Frameworks:$out/Frameworks/GStreamer.framework/Versions/1.0/lib:$out/wine/lib/wine/x86_64-unix:/usr/lib" \
+            WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d;winemac.drv=d;winecoreaudio.drv=d" \
+            "$out/wine/bin/$1" "${@:2}"
+    }
+    # Into a file, not a pipe: a Wine process left running would hold a pipe open and the build would wait on it for good.
+    # Time-boxed for the same reason: a hang fails the build with what was still running, instead of using up the job's time.
+    said="$work/smoke.log"
+    ( headless wine wineboot --init && headless wine cmd /c "start /wait /b cmd /c echo cellar-smoke-ok"
+      headless wineserver -w ) >"$said" 2>&1 &
+    smoking=$!
+    for _ in $(seq "${SMOKE_SECONDS:-300}"); do kill -0 $smoking 2>/dev/null || break; sleep 1; done
+    if kill -0 $smoking 2>/dev/null; then
+        echo "smoke test: still running after ${SMOKE_SECONDS:-300} s. Wine's processes then:"
+        ps -axo pid,etime,command | grep -E 'C:\\|wineserver|/wine/bin/' | grep -v grep | cut -c1-200 || echo "  (none)"
+        headless wineserver -k 2>/dev/null || true; kill $smoking 2>/dev/null || true
+    fi
+    wait $smoking 2>/dev/null || true
+    grep -qx cellar-smoke-ok < <(tr -d '\r' < "$said") \
+        || { echo "smoke test: the engine can't set up a bottle or start a program from another:"; tr -d '\r' < "$said" | tail -30; exit 1; }
+    echo "smoke test: new bottle set up, and a program started another"
+    rm -rf "$smoke"
+else
+    echo "smoke test: skipped (SMOKE_TEST=0); run it on a Mac before using this engine"
 fi
-wait $smoking 2>/dev/null || true
-grep -qx cellar-smoke-ok < <(tr -d '\r' < "$said") \
-    || { echo "smoke test: the engine can't set up a bottle or start a program from another:"; tr -d '\r' < "$said" | tail -30; exit 1; }
-echo "smoke test: new bottle set up, and a program started another"
-rm -rf "$smoke"
 
 tarball="$work/out/cellar-engine-$ENGINE_ID.tar.xz"
 tar -C "$work/out" -cJf "$tarball" "$ENGINE_ID"
