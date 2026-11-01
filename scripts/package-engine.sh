@@ -99,6 +99,10 @@ check() {
         grep -aq CX_APPLEGPTK_LIBD3DSHARED_PATH "$unix/ntdll.so" \
             || { echo "ntdll.so has no D3DMetal bridge (CX_APPLEGPTK_LIBD3DSHARED_PATH)"; missing=1; }
         grep -aq WINEDLLPATH_PREPEND "$unix/ntdll.so" || { echo "ntdll.so ignores WINEDLLPATH_PREPEND"; missing=1; }
+        # CrossOver's ntdll starts every new process with bin/wineloader: without it, nothing a program starts runs.
+        if grep -aqx wineloader <(tr '\0' '\n' < "$unix/ntdll.so") && [ ! -x "$root/wine/bin/wineloader" ]; then
+            echo "ntdll.so starts processes with bin/wineloader, which the engine doesn't ship"; missing=1
+        fi
     fi
     if [[ "$id" == crossover-* ]]; then
         [ -d "$root/wine/share/wine/mono" ] && [ -d "$root/wine/share/wine/gecko" ] \

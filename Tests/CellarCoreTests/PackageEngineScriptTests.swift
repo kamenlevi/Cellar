@@ -108,6 +108,24 @@ private func sourceBuiltEngine(_ tmp: TempRoot, ntdll markers: [String], monoAnd
     #expect(result.code == 0, "\(result.output)")
 }
 
+@Test func checkRefusesAnEngineWithoutTheLoaderItsNtdllStarts() throws {
+    // CrossOver 25.1.1's ntdll starts every new process with bin/wineloader; Wine's install names it bin/wine.
+    // Without it, the first program runs but none it starts does: no new bottle, no Steam helpers, no games.
+    let tmp = try TempRoot()
+    let engine = try sourceBuiltEngine(tmp, ntdll: ["CX_APPLEGPTK_LIBD3DSHARED_PATH", "WINEDLLPATH_PREPEND", "wineloader"])
+    let result = try check(engine)
+    #expect(result.code != 0)
+    #expect(result.output.contains("bin/wineloader"), "\(result.output)")
+}
+
+@Test func checkPassesAnEngineThatShipsTheLoaderItsNtdllStarts() throws {
+    let tmp = try TempRoot()
+    let engine = try sourceBuiltEngine(tmp, ntdll: ["CX_APPLEGPTK_LIBD3DSHARED_PATH", "WINEDLLPATH_PREPEND", "wineloader"])
+    try FileManager.default.copyItem(at: engine.appending(path: "wine/bin/wine"), to: engine.appending(path: "wine/bin/wineloader"))
+    let result = try check(engine)
+    #expect(result.code == 0, "\(result.output)")
+}
+
 @Test func checkAllowsHomebrewTextInsideAWindowsDLL() throws {
     // A Windows DLL can't load a Mac library; a Homebrew path in one is only text (a mingw header's file name).
     let tmp = try TempRoot()

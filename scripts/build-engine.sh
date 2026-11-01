@@ -97,6 +97,9 @@ cd "$work/build"
     ac_cv_lib_soname_odbc=   # as in engine c2: Wine asks for plain libodbc.dylib, and works without it
 make -j"$jobs"
 make install-lib
+# CrossOver's ntdll starts every new process with bin/wineloader (CrossOver's own packaging renames the loader); Wine's
+# install names it bin/wine, which Cellar runs. Both, then: without wineloader nothing a program starts would run.
+cp -p "$out/wine/bin/wine" "$out/wine/bin/wineloader"
 
 # Every library Wine opens by name at run time must be one the engine ships (Sikarugir's template), or one engine c2
 # also asks for without shipping it (Wine runs on without it).
@@ -159,6 +162,22 @@ cat > "$out/ENGINE.json" <<JSON
 JSON
 
 "$repo/scripts/package-engine.sh" --check "$out"
+
+# Smoke test, as Cellar runs Wine headless (no window or sound driver): set up a new bottle, then have one program start
+# another (cmd -> start -> cmd), the way Steam starts its helpers and games.
+# The variables go on each Wine command itself: macOS drops DYLD_* when a protected program such as /bin/bash starts.
+smoke="$work/smoke" && rm -rf "$smoke"
+headless() {
+    env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH="$out/wine/bin:/usr/bin:/bin" WINEPREFIX="$smoke" WINEDEBUG=-all \
+        DYLD_FALLBACK_LIBRARY_PATH="$out/Frameworks:$out/Frameworks/GStreamer.framework/Versions/1.0/lib:$out/wine/lib/wine/x86_64-unix:/usr/lib" \
+        WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d;winemac.drv=d;winecoreaudio.drv=d" \
+        "$out/wine/bin/$1" "${@:2}"
+}
+said=$( { headless wine wineboot --init && headless wine cmd /c "start /wait /b cmd /c echo cellar-smoke-ok"
+          headless wineserver -w; } 2>&1 | tr -d '\r' ) || true
+grep -qx cellar-smoke-ok <<<"$said" || { echo "smoke test: the engine can't set up a bottle or start a program from another:"; echo "$said" | tail -20; exit 1; }
+echo "smoke test: new bottle set up, and a program started another"
+rm -rf "$smoke"
 
 tarball="$work/out/cellar-engine-$ENGINE_ID.tar.xz"
 tar -C "$work/out" -cJf "$tarball" "$ENGINE_ID"
