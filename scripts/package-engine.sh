@@ -107,6 +107,12 @@ check() {
     if [[ "$id" == crossover-* ]]; then
         [ -d "$root/wine/share/wine/mono" ] && [ -d "$root/wine/share/wine/gecko" ] \
             || { echo "Wine Mono or Gecko is missing"; missing=1; }
+        # CrossOver hack 22435: placeholders in a new bottle, so a game that loads these gets D3DMetal's.
+        local dll
+        for dll in atidxx64 nvapi64 nvngx; do
+            grep -qx "11,,$dll.dll,\*" "$root/wine/share/wine/wine.inf" 2>/dev/null \
+                || { echo "wine.inf doesn't give new bottles D3DMetal's placeholder $dll.dll"; missing=1; }
+        done
     fi
     # A source build links against Homebrew on the build machine; a path left behind breaks on any other Mac.
     # Windows-side files (*-windows) can't load a Mac library, so a Homebrew path in one is only text: shown, not refused.

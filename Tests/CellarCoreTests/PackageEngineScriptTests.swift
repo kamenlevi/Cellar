@@ -66,7 +66,8 @@ func checkRefusesAppleToolkitFiles(_ name: String) throws {
 }
 
 /// A source-built engine's ntdll.so, carrying the given marker strings.
-private func sourceBuiltEngine(_ tmp: TempRoot, ntdll markers: [String], monoAndGecko: Bool = true) throws -> URL {
+private func sourceBuiltEngine(_ tmp: TempRoot, ntdll markers: [String], monoAndGecko: Bool = true,
+                               d3dmetalPlaceholders: Bool = true) throws -> URL {
     let engine = try FakeEngine.makeFolder(id: "crossover-25.1.1-c1", in: tmp.url)
     try Data(#"{"id":"crossover-25.1.1-c1"}"#.utf8).write(to: engine.appending(path: "ENGINE.json"))
     let unix = engine.appending(path: "wine/lib/wine/x86_64-unix")
@@ -77,6 +78,9 @@ private func sourceBuiltEngine(_ tmp: TempRoot, ntdll markers: [String], monoAnd
             try FileManager.default.createDirectory(at: engine.appending(path: "wine/share/wine/\(addon)"), withIntermediateDirectories: true)
         }
     }
+    let placeholders = d3dmetalPlaceholders ? "11,,atidxx64.dll,*\n11,,nvapi64.dll,*\n11,,nvngx.dll,*\n" : ""
+    try FileManager.default.createDirectory(at: engine.appending(path: "wine/share/wine"), withIntermediateDirectories: true)
+    try Data("[FakeDllsWin64]\n10,twain_64,sane.ds\n\(placeholders)".utf8).write(to: engine.appending(path: "wine/share/wine/wine.inf"))
     return engine
 }
 
@@ -100,6 +104,16 @@ private func sourceBuiltEngine(_ tmp: TempRoot, ntdll markers: [String], monoAnd
                                                  monoAndGecko: false))
     #expect(result.code != 0)
     #expect(result.output.contains("Mono"), "\(result.output)")
+}
+
+@Test func checkRefusesASourceBuiltEngineWithoutD3DMetalsPlaceholderDLLs() throws {
+    // CrossOver hack 22435 (in Sikarugir's wine.inf, not in CrossOver 25.1.1's source): a new bottle gets placeholder
+    // atidxx64, nvapi64 and nvngx DLLs, so a game that loads them gets D3DMetal's. Without them, nvapi64 doesn't load.
+    let tmp = try TempRoot()
+    let result = try check(try sourceBuiltEngine(tmp, ntdll: ["CX_APPLEGPTK_LIBD3DSHARED_PATH", "WINEDLLPATH_PREPEND"],
+                                                 d3dmetalPlaceholders: false))
+    #expect(result.code != 0)
+    #expect(result.output.contains("nvapi64"), "\(result.output)")
 }
 
 @Test func checkPassesAnEngineWithBridgeAndPrepend() throws {

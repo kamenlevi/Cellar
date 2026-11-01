@@ -1,0 +1,20 @@
+wine.inf: give new bottles placeholder atidxx64, nvapi64 and nvngx DLLs.
+
+CrossOver hack 22435, as in the wine.inf of engine c2 (Sikarugir 10.0_6) but not
+in CrossOver 25.1.1's source. With a placeholder in system32, a game that loads
+one of these gets D3DMetal's (AMD's driver extension, NVAPI, DLSS on MetalFX)
+through WINEDLLPATH_PREPEND; without one, Wine doesn't find it. LGPL-2.1, like Wine.
+
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -2161,6 +2161,10 @@
+ [FakeDllsWin64]
+ 10,twain_64,sane.ds
+ 10,twain_64,gphoto2.ds
++; CW HACK 22435: fake DLLs for D3DMetal
++11,,atidxx64.dll,*
++11,,nvapi64.dll,*
++11,,nvngx.dll,*
+ 
+ ; Wow64-only fake dlls
+ [FakeDllsWow64]

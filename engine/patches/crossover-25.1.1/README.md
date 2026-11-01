@@ -7,5 +7,6 @@ Applied in order by `scripts/build-engine.sh` to `sources/wine` of `crossover-so
 |---|---|---|
 | `0001-ntdll-winedllpath-prepend.patch` | Looks in `WINEDLLPATH_PREPEND` before Wine's own DLLs, which is how Cellar loads the user's imported D3DMetal | MacPorts `game-porting-toolkit/files/1005-ntdll-d3dmetal-env.diff` |
 | `0002-real-windows-user-name.patch` | Reports the real Windows user name and its profile folder, not CrossOver's "crossover", so existing bottles keep their saves | Upstream wine-10.0's `advapi.c` and `shellpath.c` |
+| `0003-d3dmetal-placeholder-dlls.patch` | Gives new bottles placeholder `atidxx64`, `nvapi64` and `nvngx` DLLs, so games that load them get D3DMetal's | CrossOver hack 22435, as in Sikarugir 10.0_6's `wine.inf` |
 
 Wine's focus fix (b568eaac4a) is already in CrossOver 25.1.1 (`docs/m4-spike.md`).
